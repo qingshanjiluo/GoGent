@@ -182,7 +182,7 @@ func check_errors(scan_path: String = "res://") -> Dictionary:
 		if not file_error.is_empty():
 			errors.append_array(file_error)
 			failed += 1
-	return {
+	var result := {
 		"success": true,
 		"scanned": scanned,
 		"failed_scripts": failed,
@@ -190,6 +190,19 @@ func check_errors(scan_path: String = "res://") -> Dictionary:
 		"errors": errors,
 		"summary": "扫描了 %d 个脚本，发现 %d 个文件有 %d 个错误。" % [scanned, failed, errors.size()]
 	}
+	# 记录到历史
+	_error_check_history.append({
+		"timestamp": Time.get_datetime_string_from_system(),
+		"scan_path": scan_path,
+		"scanned": scanned,
+		"failed_scripts": failed,
+		"total_errors": errors.size(),
+		"summary": result["summary"]
+	})
+	# 最多保留 50 条历史
+	if _error_check_history.size() > 50:
+		_error_check_history = _error_check_history.slice(_error_check_history.size() - 50)
+	return result
 
 ## 递归查找所有 .gd 文件
 func _find_gd_files(path: String) -> PackedStringArray:
@@ -507,36 +520,3 @@ func get_recent_errors(count: int = 5) -> Dictionary:
 	recent.reverse()
 	return {"success": true, "records": recent, "total_records": _error_check_history.size(), "showing": recent.size()}
 
-# 重写 check_errors 以支持历史记录
-func check_errors(scan_path: String = "res://") -> Dictionary:
-	var errors: Array[Dictionary] = []
-	var scanned: int = 0
-	var failed: int = 0
-	var gd_files := _find_gd_files(scan_path)
-	for file_path in gd_files:
-		scanned += 1
-		var file_error := _check_single_script(file_path)
-		if not file_error.is_empty():
-			errors.append_array(file_error)
-			failed += 1
-	var result := {
-		"success": true,
-		"scanned": scanned,
-		"failed_scripts": failed,
-		"total_errors": errors.size(),
-		"errors": errors,
-		"summary": "扫描了 %d 个脚本，发现 %d 个文件有 %d 个错误。" % [scanned, failed, errors.size()]
-	}
-	# 记录到历史
-	_error_check_history.append({
-		"timestamp": Time.get_datetime_string_from_system(),
-		"scan_path": scan_path,
-		"scanned": scanned,
-		"failed_scripts": failed,
-		"total_errors": errors.size(),
-		"summary": result["summary"]
-	})
-	# 最多保留 50 条历史
-	if _error_check_history.size() > 50:
-		_error_check_history = _error_check_history.slice(_error_check_history.size() - 50)
-	return result
