@@ -26,6 +26,12 @@ var settings: Dictionary = {
 	"default_json_mode": false,
 	"stream_by_default": true,
 	"request_timeout": 120,
+	# API 请求频率限制（毫秒，0=不限制）
+	"api_request_delay_ms": 500,
+	# 工具调用间隔延迟（毫秒，0=不延迟）
+	"tool_call_delay_ms": 200,
+	# 每次 API 请求的最大重试次数
+	"api_max_retries": 3,
 	"training_episodes": 100,
 	"training_save_interval": 100,
 	"claude_enabled": true,

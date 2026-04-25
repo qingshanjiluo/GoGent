@@ -59,10 +59,37 @@ func set_user_message(text: String) -> void:
 func set_assistant_message(text: String, thinking: String = "") -> void:
 	hide_all()
 	_assistant_box.visible = true
-	_assistant_content.text = "[b]GoGent[/b]\n%s" % text
+	# 对文本中的 BBCode 特殊字符进行转义，避免显示异常
+	# 但保留 [b], [color=...], [i] 等我们主动添加的标签
+	# 使用自定义转义：将文本中的 [ 替换为 \[，但保留我们自己的标签
+	var escaped_text := _safe_escape(text)
+	_assistant_content.text = "[b]GoGent[/b]\n%s" % escaped_text
 	if not thinking.strip_edges().is_empty():
 		_thinking_content.visible = true
 		_thinking_content.text = "[i]Thinking[/i]\n%s" % _escape(thinking)
+
+# 安全转义：只转义文本中可能破坏 BBCode 的字符，但保留已有标签
+func _safe_escape(text: String) -> String:
+	# 将 [ 替换为 \[，但保留 [b], [/b], [color], [/color], [i], [/i] 等标签
+	var result := ""
+	var i := 0
+	while i < text.length():
+		if text[i] == "[":
+			# 检查是否是已知的 BBCode 标签
+			var remaining := text.substr(i)
+			var is_known_tag := false
+			for tag in ["[b]", "[/b]", "[i]", "[/i]", "[u]", "[/u]", "[s]", "[/s]", "[color=", "[/color]", "[font=", "[/font]", "[url", "[/url]"]:
+				if remaining.begins_with(tag):
+					is_known_tag = true
+					break
+			if is_known_tag:
+				result += "["
+			else:
+				result += "\\["
+		else:
+			result += text[i]
+		i += 1
+	return result
 
 func set_system_message(text: String) -> void:
 	set_assistant_message("[color=#ffeda1]%s[/color]" % _escape(text))

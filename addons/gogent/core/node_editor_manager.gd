@@ -326,14 +326,18 @@ func _check_common_syntax_issues(file_path: String, source: String) -> Array[Dic
 func get_agent_tool_manifest() -> Array[Dictionary]:
 	return [
 		{"name": "editor_info", "description": "获取当前编辑器场景和选中节点。"},
-		{"name": "list_scene_nodes", "description": "列出当前或指定场景中的节点。"},
-		{"name": "create_scene", "description": "创建一个新场景并指定根节点类型。"},
-		{"name": "add_node", "description": "在场景中添加节点。"},
-		{"name": "set_node_property", "description": "设置节点属性，属性值使用 Godot str_to_var 格式。"},
-		{"name": "delete_node", "description": "删除场景中的节点。"},
-		{"name": "select_node", "description": "在编辑器中选中节点。"},
-		{"name": "attach_script", "description": "给节点挂载脚本。"},
-		{"name": "check_errors", "description": "扫描项目中的所有 GDScript 文件，检查语法错误和解析错误，返回错误列表。"}
+		{"name": "list_scene_nodes", "description": "列出当前或指定场景中的节点。参数：scene_path（可选），include_properties（可选，是否包含属性）。"},
+		{"name": "create_scene", "description": "创建一个新场景并指定根节点类型。参数：scene_path（场景路径），root_node_class（根节点类型，默认Node2D）。"},
+		{"name": "add_node", "description": "在场景中添加节点。参数：node_class（节点类型，如Sprite2D、Node2D、Button等），parent_path（父节点路径），node_name（可选节点名），scene_path（可选场景路径）。"},
+		{"name": "set_node_property", "description": "设置节点属性，属性值使用 Godot str_to_var 格式。参数：node_path，property_name，property_value，scene_path（可选）。"},
+		{"name": "delete_node", "description": "删除场景中的节点。参数：node_path，scene_path（可选）。"},
+		{"name": "select_node", "description": "在编辑器中选中节点。参数：node_path，scene_path（可选）。"},
+		{"name": "rename_node", "description": "重命名场景中的节点。参数：node_path（节点路径），new_name（新名称），scene_path（可选场景路径）。"},
+		{"name": "duplicate_node", "description": "复制场景中的节点。参数：node_path（要复制的节点路径），new_name（可选新名称），scene_path（可选场景路径）。"},
+		{"name": "move_node", "description": "移动节点到新的父节点下。参数：node_path（要移动的节点路径），new_parent_path（目标父节点路径），scene_path（可选场景路径）。"},
+		{"name": "attach_script", "description": "给节点挂载脚本。参数：node_path，script_path，scene_path（可选）。"},
+		{"name": "check_errors", "description": "扫描项目中的所有 GDScript 文件，检查语法错误和解析错误，返回错误列表。参数：scan_path（可选，默认res://）。"},
+		{"name": "get_recent_errors", "description": "获取最近X次错误检查的结果记录。参数：count（可选，要获取的记录条数，默认5）。"}
 	]
 
 func _open_scene_if_needed(scene_path: String) -> Dictionary:
@@ -402,3 +406,137 @@ func _ensure_parent_dir(path: String) -> void:
 	var dir := path.get_base_dir()
 	if not DirAccess.dir_exists_absolute(dir):
 		DirAccess.make_dir_recursive_absolute(dir)
+
+# ---- 新增节点操作工具 ----
+
+# 错误检查历史记录（用于 get_recent_errors）
+var _error_check_history: Array[Dictionary] = []
+
+func rename_node(node_path: String, new_name: String, scene_path: String = "") -> Dictionary:
+	var open_result := _open_scene_if_needed(scene_path)
+	if not open_result.get("success", false):
+		return open_result
+	var root := _get_current_root()
+	if root == null:
+		return {"success": false, "error": "当前没有已编辑的场景。"}
+	var node := _find_node(root, node_path)
+	if node == null:
+		return {"success": false, "error": "节点不存在: %s" % node_path}
+	if new_name.strip_edges().is_empty():
+		return {"success": false, "error": "新名称不能为空。"}
+	var old_name := node.name
+	node.name = _unique_child_name(node.get_parent(), new_name)
+	_select_node(node)
+	_mark_scene_dirty()
+	scene_changed.emit("已重命名节点: %s -> %s" % [old_name, node.name])
+	return {"success": true, "old_name": old_name, "new_name": node.name, "path": node_path}
+
+func duplicate_node(node_path: String, new_name: String = "", scene_path: String = "") -> Dictionary:
+	var open_result := _open_scene_if_needed(scene_path)
+	if not open_result.get("success", false):
+		return open_result
+	var root := _get_current_root()
+	if root == null:
+		return {"success": false, "error": "当前没有已编辑的场景。"}
+	var node := _find_node(root, node_path)
+	if node == null:
+		return {"success": false, "error": "节点不存在: %s" % node_path}
+	if node == root:
+		return {"success": false, "error": "不允许复制场景根节点。"}
+	var parent := node.get_parent()
+	if parent == null:
+		return {"success": false, "error": "节点没有父节点。"}
+	# 复制节点
+	var duplicate := node.duplicate()
+	if duplicate == null:
+		return {"success": false, "error": "节点复制失败。"}
+	# 设置名称
+	var base_name := new_name if not new_name.is_empty() else (node.name + "Copy")
+	duplicate.name = _unique_child_name(parent, base_name)
+	parent.add_child(duplicate)
+	duplicate.owner = root
+	_select_node(duplicate)
+	_mark_owned(root)
+	_mark_scene_dirty()
+	scene_changed.emit("已复制节点: %s -> %s" % [node_path, duplicate.name])
+	return {"success": true, "original": node_path, "new_node": str(root.get_path_to(duplicate)), "name": duplicate.name}
+
+func move_node(node_path: String, new_parent_path: String, scene_path: String = "") -> Dictionary:
+	var open_result := _open_scene_if_needed(scene_path)
+	if not open_result.get("success", false):
+		return open_result
+	var root := _get_current_root()
+	if root == null:
+		return {"success": false, "error": "当前没有已编辑的场景。"}
+	var node := _find_node(root, node_path)
+	if node == null:
+		return {"success": false, "error": "节点不存在: %s" % node_path}
+	if node == root:
+		return {"success": false, "error": "不允许移动场景根节点。"}
+	var new_parent := _find_node(root, new_parent_path)
+	if new_parent == null:
+		return {"success": false, "error": "目标父节点不存在: %s" % new_parent_path}
+	if new_parent == node:
+		return {"success": false, "error": "不能将节点移动到自己下面。"}
+	if _is_descendant(node, new_parent):
+		return {"success": false, "error": "不能将节点移动到自己的子节点下面。"}
+	var old_parent := node.get_parent()
+	old_parent.remove_child(node)
+	new_parent.add_child(node)
+	node.owner = root
+	_select_node(node)
+	_mark_owned(root)
+	_mark_scene_dirty()
+	scene_changed.emit("已移动节点: %s -> %s" % [node_path, new_parent_path])
+	return {"success": true, "node": node_path, "from": str(root.get_path_to(old_parent)), "to": new_parent_path}
+
+# 检查 node 是否是 potential_ancestor 的后代
+func _is_descendant(node: Node, potential_ancestor: Node) -> bool:
+	var current := potential_ancestor.get_parent()
+	while current != null:
+		if current == node:
+			return true
+		current = current.get_parent()
+	return false
+
+# 获取最近X次错误检查记录
+func get_recent_errors(count: int = 5) -> Dictionary:
+	if _error_check_history.is_empty():
+		return {"success": true, "records": [], "message": "暂无错误检查记录。"}
+	var recent := _error_check_history.slice(max(0, _error_check_history.size() - count), _error_check_history.size())
+	recent.reverse()
+	return {"success": true, "records": recent, "total_records": _error_check_history.size(), "showing": recent.size()}
+
+# 重写 check_errors 以支持历史记录
+func check_errors(scan_path: String = "res://") -> Dictionary:
+	var errors: Array[Dictionary] = []
+	var scanned: int = 0
+	var failed: int = 0
+	var gd_files := _find_gd_files(scan_path)
+	for file_path in gd_files:
+		scanned += 1
+		var file_error := _check_single_script(file_path)
+		if not file_error.is_empty():
+			errors.append_array(file_error)
+			failed += 1
+	var result := {
+		"success": true,
+		"scanned": scanned,
+		"failed_scripts": failed,
+		"total_errors": errors.size(),
+		"errors": errors,
+		"summary": "扫描了 %d 个脚本，发现 %d 个文件有 %d 个错误。" % [scanned, failed, errors.size()]
+	}
+	# 记录到历史
+	_error_check_history.append({
+		"timestamp": Time.get_datetime_string_from_system(),
+		"scan_path": scan_path,
+		"scanned": scanned,
+		"failed_scripts": failed,
+		"total_errors": errors.size(),
+		"summary": result["summary"]
+	})
+	# 最多保留 50 条历史
+	if _error_check_history.size() > 50:
+		_error_check_history = _error_check_history.slice(_error_check_history.size() - 50)
+	return result

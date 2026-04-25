@@ -12,14 +12,26 @@ var http_request: HTTPRequest
 var stream_manager: GoGentStreamManager
 var is_generating := false
 
+# 请求频率限制
+var _last_request_time: float = 0.0
+var _request_count: int = 0
+var _last_reset_time: float = 0.0
+const RATE_LIMIT_WINDOW := 60.0  # 统计窗口（秒）
+const MAX_REQUESTS_PER_WINDOW := 30  # 每窗口最大请求数
+
 func _init() -> void:
 	stream_manager = GoGentStreamManager.new()
 	stream_manager.stream_chunk.connect(func(chunk: String, id: int): stream_chunk.emit(chunk, id))
 	stream_manager.stream_thinking_chunk.connect(func(chunk: String, id: int): stream_thinking_chunk.emit(chunk, id))
 	stream_manager.stream_completed.connect(func(text: String, thinking: String, id: int): stream_completed.emit(true, text, thinking, id))
 	stream_manager.stream_error.connect(func(error: String, id: int): stream_completed.emit(false, error, "", id))
+	_last_reset_time = Time.get_unix_time_from_system()
 
 func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> void:
+	# 频率限制检查
+	if not _check_rate_limit():
+		request_completed.emit(false, "请求过于频繁，请稍后再试（每秒最多 %d 次）。" % MAX_REQUESTS_PER_WINDOW, "")
+		return
 	var context := _build_request_context(messages, options, false)
 	if context.is_empty():
 		request_completed.emit(false, "No valid model is configured.", "")
@@ -36,6 +48,10 @@ func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) ->
 	if singleton.config_manager != null:
 		http_request.timeout = max(1, int(singleton.config_manager.get_setting("request_timeout", 120)))
 	_apply_proxy(http_request)
+	# 请求间隔延迟
+	var delay_ms := int(singleton.config_manager.get_setting("api_request_delay_ms", 500)) if singleton.config_manager != null else 500
+	if delay_ms > 0:
+		OS.delay_msec(delay_ms)
 	is_generating = true
 	request_started.emit()
 	var err := http_request.request(context["url"], context["headers"], HTTPClient.METHOD_POST, context["body"])
@@ -44,11 +60,18 @@ func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) ->
 		request_completed.emit(false, "HTTP request failed to start: %s" % err, "")
 
 func send_stream_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> int:
+	# 频率限制检查
+	if not _check_rate_limit():
+		return -1
 	var context := _build_request_context(messages, options, true)
 	if context.is_empty():
 		return -1
 	if context.get("provider", "openai") == "anthropic":
 		return -1
+	var singleton = GoGentSingleton.get_instance()
+	var delay_ms := int(singleton.config_manager.get_setting("api_request_delay_ms", 500)) if singleton.config_manager != null else 500
+	if delay_ms > 0:
+		OS.delay_msec(delay_ms)
 	return stream_manager.send_stream_request(context)
 
 func cancel_request() -> void:
@@ -227,3 +250,16 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 
 static func build_message(role: String, content: String) -> Dictionary:
 	return {"role": role, "content": content}
+
+# 检查请求频率限制
+func _check_rate_limit() -> bool:
+	var now := Time.get_unix_time_from_system()
+	# 每 RATE_LIMIT_WINDOW 秒重置计数器
+	if now - _last_reset_time >= RATE_LIMIT_WINDOW:
+		_request_count = 0
+		_last_reset_time = now
+	# 检查是否超过限制
+	if _request_count >= MAX_REQUESTS_PER_WINDOW:
+		return false
+	_request_count += 1
+	return true
