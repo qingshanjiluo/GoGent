@@ -3,11 +3,12 @@ class_name GoGentWorkspaceToolManager
 extends RefCounted
 
 const MAX_READ_BYTES := 256000
+const MAX_READ_LINES := 200
 
 func get_tool_manifest() -> Array[Dictionary]:
 	return [
 		{"name": "list_files", "description": "列出 res:// 项目目录中的文件。参数：path, recursive, max_results。"},
-		{"name": "read_file", "description": "读取 res:// 项目文本文件。参数：path。"},
+		{"name": "read_file", "description": "读取 res:// 项目文本文件。参数：path, offset（可选，起始行号，从1开始）, limit（可选，最多读取行数）。超过200行时自动返回行数摘要。"},
 		{"name": "write_file", "description": "写入 res:// 项目文本文件，会真实修改项目。参数：path, content。"},
 		{"name": "append_file", "description": "追加文本到 res:// 项目文件。参数：path, content。"},
 		{"name": "search_text", "description": "在项目文本文件中搜索内容。参数：query, path, max_results。"},
@@ -21,7 +22,7 @@ func execute_tool_call(call: Dictionary) -> Dictionary:
 		"list_files":
 			return list_files(str(args.get("path", "res://")), bool(args.get("recursive", true)), int(args.get("max_results", 200)))
 		"read_file":
-			return read_file(str(args.get("path", "")))
+			return read_file(str(args.get("path", "")), int(args.get("offset", 0)), int(args.get("limit", 0)))
 		"write_file":
 			return write_file(str(args.get("path", "")), str(args.get("content", "")))
 		"append_file":
@@ -44,7 +45,7 @@ func list_files(path: String = "res://", recursive: bool = true, max_results: in
 	_collect_files(root, recursive, max(1, max_results), result)
 	return {"success": true, "path": root, "files": result}
 
-func read_file(path: String) -> Dictionary:
+func read_file(path: String, offset: int = 0, limit: int = 0) -> Dictionary:
 	var clean := _normalize_res_path(path)
 	if clean.is_empty():
 		return {"success": false, "error": "只能读取 res:// 项目路径。"}
@@ -59,7 +60,35 @@ func read_file(path: String) -> Dictionary:
 		return {"success": false, "error": "文件过大，超过 %d bytes: %s" % [MAX_READ_BYTES, clean]}
 	var content := file.get_as_text()
 	file.close()
-	return {"success": true, "path": clean, "content": content}
+	var lines := content.split("\n")
+	var total_lines := lines.size()
+	# 如果指定了 offset/limit，返回指定范围的行
+	if offset > 0 or limit > 0:
+		var start_line := max(0, offset - 1)  # offset 从 1 开始
+		var end_line := total_lines
+		if limit > 0:
+			end_line = min(total_lines, start_line + limit)
+		var selected := lines.slice(start_line, end_line)
+		return {
+			"success": true,
+			"path": clean,
+			"total_lines": total_lines,
+			"offset": start_line + 1,
+			"limit": limit if limit > 0 else total_lines,
+			"content": "\n".join(selected)
+		}
+	# 超过最大行数时返回摘要，让 AI 可以分段读取
+	if total_lines > MAX_READ_LINES:
+		return {
+			"success": true,
+			"path": clean,
+			"total_lines": total_lines,
+			"truncated": true,
+			"message": "文件共 %d 行，超过 %d 行限制。请使用 offset 和 limit 参数分段读取。例如：read_file(path=\"%s\", offset=1, limit=200) 读取前200行。" % [total_lines, MAX_READ_LINES, clean],
+			"content": "\n".join(lines.slice(0, MAX_READ_LINES)),
+			"showing_lines": "1-%d" % MAX_READ_LINES
+		}
+	return {"success": true, "path": clean, "total_lines": total_lines, "content": content}
 
 func write_file(path: String, content: String) -> Dictionary:
 	var clean := _normalize_res_path(path)

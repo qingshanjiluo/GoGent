@@ -89,6 +89,15 @@ func record_epsilon(episode: int, epsilon: float) -> void:
 func record_loss(episode: int, loss: float) -> void:
 	add_data_point("Loss", episode, loss)
 
+func get_reward_data() -> Array[float]:
+	var series: DataSeries = series_map.get("Reward")
+	if series == null:
+		return []
+	var result: Array[float] = []
+	for point in series.data:
+		result.append(point.value)
+	return result
+
 func clear_all() -> void:
 	for series in series_map.values():
 		series.data.clear()

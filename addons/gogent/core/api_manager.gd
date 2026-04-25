@@ -76,6 +76,17 @@ func _build_request_context(messages: Array[Dictionary], options: Dictionary, st
 		body_data["presence_penalty"] = float(request_options["presence_penalty"])
 		body_data["frequency_penalty"] = float(request_options["frequency_penalty"])
 		if bool(request_options["json_mode"]):
+			# DeepSeek 等供应商要求 prompt 中包含 "json" 字样才能使用 json_object 响应格式
+			# 自动检查并确保 messages 中包含 json 关键词
+			var has_json_keyword := false
+			for msg in messages:
+				var content := str(msg.get("content", ""))
+				if content.to_lower().contains("json"):
+					has_json_keyword = true
+					break
+			if not has_json_keyword and messages.size() > 0:
+				var last := messages[messages.size() - 1]
+				last["content"] = str(last.get("content", "")) + "\n\n请以 JSON 格式返回。"
 			body_data["response_format"] = {"type": "json_object"}
 	if provider != "anthropic" and bool(request_options["tools_enabled"]) and options.has("tools") and model.supports_tools:
 		body_data["tools"] = options["tools"]

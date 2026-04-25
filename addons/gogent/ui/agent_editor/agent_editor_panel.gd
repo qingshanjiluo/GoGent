@@ -264,6 +264,15 @@ func _save_agent() -> void:
 		agent_updated.emit(_current_agent_id, data)
 	GoGentSingleton.print_gogent_console("Agent saved.", "success")
 	refresh()
+	# 保存后重新选中当前 agent，确保表单保持可编辑状态
+	_select_agent_by_id(_current_agent_id)
+
+func _select_agent_by_id(agent_id: String) -> void:
+	for i in range(agent_list.get_item_count()):
+		if str(agent_list.get_item_metadata(i)) == agent_id:
+			agent_list.select(i)
+			_select_agent(i)
+			return
 
 func _delete_agent() -> void:
 	if _current_agent_id.is_empty():

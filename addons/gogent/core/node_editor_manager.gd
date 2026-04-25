@@ -168,6 +168,161 @@ func attach_script(node_path: String, script_path: String, scene_path: String = 
 	scene_changed.emit("已挂载脚本: %s -> %s" % [node_path, script_path])
 	return {"success": true, "path": node_path, "script": script_path}
 
+## 扫描项目中的所有 GDScript 文件，检查语法错误和解析错误
+## 返回错误列表，包含文件路径、行号和错误描述
+func check_errors(scan_path: String = "res://") -> Dictionary:
+	var errors: Array[Dictionary] = []
+	var scanned: int = 0
+	var failed: int = 0
+	# 递归扫描所有 .gd 文件
+	var gd_files := _find_gd_files(scan_path)
+	for file_path in gd_files:
+		scanned += 1
+		var file_error := _check_single_script(file_path)
+		if not file_error.is_empty():
+			errors.append_array(file_error)
+			failed += 1
+	return {
+		"success": true,
+		"scanned": scanned,
+		"failed_scripts": failed,
+		"total_errors": errors.size(),
+		"errors": errors,
+		"summary": "扫描了 %d 个脚本，发现 %d 个文件有 %d 个错误。" % [scanned, failed, errors.size()]
+	}
+
+## 递归查找所有 .gd 文件
+func _find_gd_files(path: String) -> PackedStringArray:
+	var result: PackedStringArray = []
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return result
+	dir.list_dir_begin()
+	var file_name := dir.get_next()
+	while not file_name.is_empty():
+		if file_name.begins_with("."):
+			file_name = dir.get_next()
+			continue
+		var full_path := path.path_join(file_name)
+		if dir.current_is_dir():
+			# 跳过 addons 目录（除非是 gogent 自身）
+			if file_name == "addons":
+				file_name = dir.get_next()
+				continue
+			result.append_array(_find_gd_files(full_path))
+		elif file_name.ends_with(".gd"):
+			result.append(full_path)
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	return result
+
+## 检查单个脚本文件的解析错误
+func _check_single_script(file_path: String) -> Array[Dictionary]:
+	var errors: Array[Dictionary] = []
+	# 尝试加载脚本资源
+	var script := ResourceLoader.load(file_path, "GDScript", ResourceLoader.CACHE_MODE_IGNORE)
+	if script == null:
+		errors.append({
+			"file": file_path,
+			"line": 0,
+			"message": "无法加载脚本文件（可能文件不存在或格式错误）"
+		})
+		return errors
+	if not (script is Script):
+		errors.append({
+			"file": file_path,
+			"line": 0,
+			"message": "资源不是有效的 Script 类型"
+		})
+		return errors
+	# 检查脚本是否存在解析错误
+	# Godot 4 中，Script 有 get_script_property_list() 等方法
+	# 但解析错误需要通过尝试获取 source_code 并重新编译来检测
+	var source := ""
+	if script.has_method("get_source_code"):
+		source = script.get_source_code()
+	if source.is_empty():
+		# 尝试通过文件系统读取源码
+		var file := FileAccess.open(file_path, FileAccess.READ)
+		if file != null:
+			source = file.get_as_text()
+			file.close()
+	if source.is_empty():
+		errors.append({
+			"file": file_path,
+			"line": 0,
+			"message": "无法读取脚本源码"
+		})
+		return errors
+	# 尝试用 GDScript 重新编译来检测错误
+	var gdscript := GDScript.new()
+	gdscript.source_code = source
+	# 通过 try_reload 或直接设置 source_code 触发编译
+	var reload_err := gdscript.reload()
+	if reload_err != OK:
+		# 尝试从错误信息中提取行号
+		var err_msg := error_string(reload_err)
+		errors.append({
+			"file": file_path,
+			"line": 0,
+			"message": "编译错误: %s (code: %d)" % [err_msg, reload_err]
+		})
+	# 额外检查：逐行扫描常见语法问题
+	errors.append_array(_check_common_syntax_issues(file_path, source))
+	return errors
+
+## 检查常见语法问题（缩进、关键字拼写等）
+func _check_common_syntax_issues(file_path: String, source: String) -> Array[Dictionary]:
+	var errors: Array[Dictionary] = []
+	var lines := source.split("\n")
+	for i in range(lines.size()):
+		var line := lines[i]
+		var line_num := i + 1
+		var stripped := line.strip_edges()
+		if stripped.is_empty() or stripped.begins_with("#"):
+			continue
+		# 检查混用 tab 和空格
+		if line.begins_with("\t") and line.find("    ") != -1:
+			errors.append({
+				"file": file_path,
+				"line": line_num,
+				"message": "行 %d: 混用了 Tab 和空格缩进" % line_num
+			})
+		# 检查明显的关键字拼写错误
+		if stripped.begins_with("funciton ") or stripped.begins_with("fucntion "):
+			errors.append({
+				"file": file_path,
+				"line": line_num,
+				"message": "行 %d: 疑似 'function' 拼写错误，应为 'func'" % line_num
+			})
+		if stripped.begins_with("ver ") or stripped.begins_with("varible "):
+			errors.append({
+				"file": file_path,
+				"line": line_num,
+				"message": "行 %d: 疑似变量声明拼写错误" % line_num
+			})
+		if stripped.begins_with("cont ") or stripped.begins_with("const "):
+			# const 是合法的，cont 不是
+			if stripped.begins_with("cont "):
+				errors.append({
+					"file": file_path,
+					"line": line_num,
+					"message": "行 %d: 疑似 'const' 拼写错误" % line_num
+				})
+		# 检查 if/for/while 后缺少冒号
+		if not stripped.ends_with(":") and not stripped.ends_with(": "):
+			for keyword in ["if ", "elif ", "else", "for ", "while ", "match ", "func "]:
+				if stripped.begins_with(keyword) and not stripped.ends_with(":") and not line.contains(":"):
+					# 排除单行 if 语句
+					if not (stripped.begins_with("if ") and stripped.contains(":")):
+						errors.append({
+							"file": file_path,
+							"line": line_num,
+							"message": "行 %d: '%s' 语句后缺少冒号 ':'" % [line_num, keyword.strip_edges()]
+						})
+					break
+	return errors
+
 func get_agent_tool_manifest() -> Array[Dictionary]:
 	return [
 		{"name": "editor_info", "description": "获取当前编辑器场景和选中节点。"},
@@ -177,7 +332,8 @@ func get_agent_tool_manifest() -> Array[Dictionary]:
 		{"name": "set_node_property", "description": "设置节点属性，属性值使用 Godot str_to_var 格式。"},
 		{"name": "delete_node", "description": "删除场景中的节点。"},
 		{"name": "select_node", "description": "在编辑器中选中节点。"},
-		{"name": "attach_script", "description": "给节点挂载脚本。"}
+		{"name": "attach_script", "description": "给节点挂载脚本。"},
+		{"name": "check_errors", "description": "扫描项目中的所有 GDScript 文件，检查语法错误和解析错误，返回错误列表。"}
 	]
 
 func _open_scene_if_needed(scene_path: String) -> Dictionary:

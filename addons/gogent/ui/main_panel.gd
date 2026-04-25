@@ -118,6 +118,7 @@ func _build_ui() -> void:
 	_add_tab(tabs, "Scene", "场景")
 	_add_tab(tabs, "Training", "训练")
 	_add_tab(tabs, "Agents", "Agent")
+	_add_tab(tabs, "Info", "信息")
 	_add_tab(tabs, "Settings", "设置")
 
 	_containers["Chat"] = _build_chat(root)
@@ -125,6 +126,7 @@ func _build_ui() -> void:
 	_containers["Scene"] = _build_scene(root)
 	_containers["Training"] = _build_training(root)
 	_containers["Agents"] = _build_agents(root)
+	_containers["Info"] = _build_info(root)
 	_containers["Settings"] = _build_settings(root)
 	_show_tab("Chat")
 
@@ -340,6 +342,27 @@ func _build_training(parent: Control) -> Control:
 	stop_button.pressed.connect(func(): GoGentSingleton.get_instance().training_manager.stop_training())
 	buttons.add_child(stop_button)
 
+	# AI 自动调参配置
+	var ai_tuning_row := HBoxContainer.new()
+	box.add_child(ai_tuning_row)
+	var ai_tuning_toggle := CheckButton.new()
+	ai_tuning_toggle.text = "AI 自动调参"
+	ai_tuning_toggle.button_pressed = false
+	ai_tuning_toggle.toggled.connect(func(enabled: bool):
+		GoGentSingleton.get_instance().training_manager.config.ai_tuning_enabled = enabled
+	)
+	ai_tuning_row.add_child(ai_tuning_toggle)
+	ai_tuning_row.add_child(_label("调参间隔"))
+	var ai_tuning_interval := SpinBox.new()
+	ai_tuning_interval.min_value = 1
+	ai_tuning_interval.max_value = 100
+	ai_tuning_interval.step = 1
+	ai_tuning_interval.value = 10
+	ai_tuning_interval.value_changed.connect(func(val: float):
+		GoGentSingleton.get_instance().training_manager.config.ai_tuning_interval = int(val)
+	)
+	ai_tuning_row.add_child(ai_tuning_interval)
+
 	var feedback_title := _label("人工反馈")
 	box.add_child(feedback_title)
 	_feedback_state = _line(box, "状态")
@@ -506,6 +529,117 @@ func _build_settings(parent: Control) -> Control:
 	box.add_child(save)
 	return scroll
 
+func _build_info(parent: Control) -> Control:
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	parent.add_child(scroll)
+	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
+
+	var title := Label.new()
+	title.text = "GoGent - Godot 通用智能代理编辑器插件"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 20)
+	box.add_child(title)
+
+	var subtitle := Label.new()
+	subtitle.text = "Godot General-purpose Intelligent Agent Editor Plugin"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	box.add_child(subtitle)
+
+	box.add_child(HSeparator.new())
+
+	# GitHub 链接
+	var github_row := HBoxContainer.new()
+	box.add_child(github_row)
+	var github_label := Label.new()
+	github_label.text = "GitHub 仓库："
+	github_row.add_child(github_label)
+	var github_link := LinkButton.new()
+	github_link.text = "https://github.com/qingshanjiluo/GoGent"
+	github_link.uri = "https://github.com/qingshanjiluo/GoGent"
+	github_row.add_child(github_link)
+
+	box.add_child(HSeparator.new())
+
+	# 简介
+	var intro := RichTextLabel.new()
+	intro.bbcode_enabled = true
+	intro.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	intro.text = """[b]GoGent[/b] 是一个 Godot 4 编辑器插件，为游戏开发提供 AI 驱动的智能辅助。
+
+[b]核心功能：[/b]
+• [b]AI 对话[/b] - 与 AI 对话，AI 可以读取项目文件、编辑代码、操作场景节点
+• [b]场景编辑[/b] - AI 可以直接创建场景、添加节点、设置属性、挂载脚本
+• [b]人机训练[/b] - 内置 DQN 强化学习训练器，支持人工反馈和 AI 自动调参
+• [b]Agent 协作[/b] - 创建多个自定义 Agent，分工协作完成复杂任务
+• [b]错误检查[/b] - AI 可以扫描项目中的所有脚本，检查语法错误
+• [b]外部工具[/b] - 支持 Claude Code 和 Codex CLI 集成
+"""
+	intro.scroll_active = false
+	box.add_child(intro)
+
+	box.add_child(HSeparator.new())
+
+	# 使用教程
+	var tutorial_title := Label.new()
+	tutorial_title.text = "📖 使用教程"
+	tutorial_title.add_theme_font_size_override("font_size", 16)
+	box.add_child(tutorial_title)
+
+	var tutorial := RichTextLabel.new()
+	tutorial.bbcode_enabled = true
+	tutorial.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tutorial.scroll_active = false
+	tutorial.text = """[b]1. 基本设置[/b]
+	  在「设置」页面选择语言、模型供应商（DeepSeek/OpenAI/Claude 等）、输入 API Key。
+	  点击「把模型名添加到当前供应商」添加模型。
+
+[b]2. AI 对话与工具调用[/b]
+	  在「对话」页面输入任务，AI 会自动调用工具来：
+	  - 读取/写入项目文件（read_file / write_file）
+	  - 创建/编辑场景节点（add_node / set_node_property）
+	  - 挂载脚本到节点（attach_script）
+	  - 检查项目错误（check_errors）
+	  AI 会先观察项目结构，再制定计划，最后执行修改。
+
+[b]3. 场景编辑[/b]
+	  在「场景」页面可以手动创建场景、添加节点、设置属性和挂载脚本。
+	  AI 也可以通过工具自动完成这些操作。
+
+[b]4. 人机训练[/b]
+	  在「训练」页面启动 DQN 训练。训练过程中可以：
+	  - 记录人工反馈来指导 AI 学习
+	  - 开启「AI 自动调参」让 AI 自动优化超参数
+	  - 查看训练图表和统计数据
+
+[b]5. Agent 协作[/b]
+	  在「Agent」页面创建多个自定义 Agent，每个 Agent 可以有不同的角色和技能。
+	  在对话页面选择 Agent 并输入任务，多个 Agent 可以协作完成复杂工作。
+
+[b]6. 控制台命令[/b]
+	  在「控制台」页面可以执行各种命令：
+	  - help - 查看所有可用命令
+	  - list_files / read_file / write_file - 文件操作
+	  - train / stop_train - 训练控制
+	  - ai_settings - 调整 AI 参数
+"""
+	box.add_child(tutorial)
+
+	box.add_child(HSeparator.new())
+
+	# 版本信息
+	var version_info := Label.new()
+	version_info.text = "版本 1.0.0 | Godot 4.6+ | GDScript"
+	version_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	version_info.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+	box.add_child(version_info)
+
+	return scroll
+
 func _connect_signals() -> void:
 	var singleton = GoGentSingleton.get_instance()
 	if singleton.api_manager != null:
@@ -530,6 +664,8 @@ func _connect_signals() -> void:
 			training.training_completed.connect(_on_training_completed)
 		if not training.human_feedback_recorded.is_connected(_on_human_feedback_recorded):
 			training.human_feedback_recorded.connect(_on_human_feedback_recorded)
+		if not training.training_ai_adjusted.is_connected(_on_training_ai_adjusted):
+			training.training_ai_adjusted.connect(_on_training_ai_adjusted)
 
 func _refresh_models() -> void:
 	if _model_button == null:
@@ -755,16 +891,60 @@ func _build_request_messages() -> Array[Dictionary]:
 	return result
 
 func _build_tool_system_prompt() -> String:
-	var tools = GoGentSingleton.get_instance().workspace_tool_manager
-	if tools == null:
-		return ""
 	var lines := PackedStringArray()
-	lines.append("你正在 Godot 编辑器插件 GoGent 中工作。你可以像 RooCode 一样先观察项目、再计划、再调用工具真实修改项目。")
-	lines.append("需要调用工具时，请输出一个或多个 <gogent_tool>{\"tool\":\"工具名\",\"args\":{...}}</gogent_tool> 标签。工具执行结果会回填到对话中，你可以继续工作。")
-	lines.append("可用工具：")
-	for tool in tools.get_tool_manifest():
-		lines.append("- %s：%s" % [tool.get("name", ""), tool.get("description", "")])
-	lines.append("重要：write_file 和 append_file 会真实修改 Godot 项目文件；console 可以调用场景编辑、训练、Claude/Codex 外部 Agent 等命令。")
+	lines.append("你正在 Godot 编辑器插件 GoGent 中工作。你有能力直接读取项目文件、编辑代码、操作场景节点、检查错误。")
+	lines.append("你可以自主决定调用工具来完成用户的任务，不需要用户手动操作。")
+	lines.append("")
+	lines.append("## 工具调用规则")
+	lines.append("1. 需要调用工具时，输出 <gogent_tool>{\"tool\":\"工具名\",\"args\":{...}}</gogent_tool> 标签")
+	lines.append("2. 可以连续调用多个工具，工具执行结果会自动回填到对话中")
+	lines.append("3. 根据执行结果决定下一步操作，直到任务完成")
+	lines.append("4. 先观察项目结构，再制定计划，最后执行修改")
+	lines.append("")
+	lines.append("## 可用工具")
+	lines.append("")
+	lines.append("### 项目文件工具")
+	var workspace_tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if workspace_tools != null:
+		for tool in workspace_tools.get_tool_manifest():
+			lines.append("- **%s**：%s" % [tool.get("name", ""), tool.get("description", "")])
+	lines.append("")
+	lines.append("### 场景节点编辑工具")
+	var node_editor = GoGentSingleton.get_instance().node_editor_manager
+	if node_editor != null:
+		for tool in node_editor.get_agent_tool_manifest():
+			lines.append("- **%s**：%s" % [tool.get("name", ""), tool.get("description", "")])
+	lines.append("")
+	lines.append("### 项目错误检查工具")
+	lines.append("- **check_errors**：扫描项目中的所有 GDScript 文件，检查语法错误和解析错误。可选参数 scan_path（默认 res://）。")
+	lines.append("")
+	lines.append("## 重要使用说明")
+	lines.append("")
+	lines.append("### read_file 分段读取")
+	lines.append("当文件超过200行时，会自动返回前200行和总行数摘要。你可以用 offset 和 limit 参数分段读取后续内容：")
+	lines.append("  {\"tool\":\"read_file\",\"args\":{\"path\":\"res://scripts/player.gd\",\"offset\":201,\"limit\":200}}")
+	lines.append("")
+	lines.append("### write_file 写入代码")
+	lines.append("  {\"tool\":\"write_file\",\"args\":{\"path\":\"res://scripts/player.gd\",\"content\":\"extends Node\\n\\nfunc _ready():\\n    pass\"}}")
+	lines.append("")
+	lines.append("### 场景节点操作")
+	lines.append("  - 添加节点：{\"tool\":\"add_node\",\"args\":{\"node_class\":\"Node2D\",\"parent_path\":\".\",\"node_name\":\"MyNode\",\"scene_path\":\"res://scene.tscn\"}}")
+	lines.append("  - 设置属性：{\"tool\":\"set_node_property\",\"args\":{\"node_path\":\"MyNode\",\"property_name\":\"position\",\"property_value\":\"Vector2(100, 200)\",\"scene_path\":\"res://scene.tscn\"}}")
+	lines.append("  - 挂载脚本：{\"tool\":\"attach_script\",\"args\":{\"node_path\":\"MyNode\",\"script_path\":\"res://scripts/player.gd\",\"scene_path\":\"res://scene.tscn\"}}")
+	lines.append("  - 查看场景：{\"tool\":\"editor_info\",\"args\":{}}")
+	lines.append("  - 列出节点：{\"tool\":\"list_scene_nodes\",\"args\":{\"scene_path\":\"res://scene.tscn\"}}")
+	lines.append("")
+	lines.append("### 错误检查")
+	lines.append("  {\"tool\":\"check_errors\",\"args\":{\"scan_path\":\"res://scripts\"}}")
+	lines.append("")
+	lines.append("## 工作流程建议")
+	lines.append("1. 先用 list_files 查看项目结构")
+	lines.append("2. 用 read_file 读取关键文件了解代码")
+	lines.append("3. 用 editor_info / list_scene_nodes 查看当前场景")
+	lines.append("4. 用 write_file / add_node / set_node_property 进行修改")
+	lines.append("5. 用 check_errors 检查修改后的错误")
+	lines.append("")
+	lines.append("注意：write_file 和 append_file 会真实修改项目文件；场景工具会真实创建/编辑 Godot 场景节点。请谨慎操作。")
 	return "\n".join(lines)
 
 func _process_tool_calls(response: String) -> void:
@@ -775,12 +955,11 @@ func _process_tool_calls(response: String) -> void:
 	if calls.is_empty():
 		_auto_tool_round = 0
 		return
-	var tools = GoGentSingleton.get_instance().workspace_tool_manager
-	if tools == null:
-		return
+	var workspace_tools = GoGentSingleton.get_instance().workspace_tool_manager
+	var node_editor = GoGentSingleton.get_instance().node_editor_manager
 	var results: Array[Dictionary] = []
 	for call in calls:
-		var result: Dictionary = tools.execute_tool_call(call)
+		var result := _execute_single_tool(call, workspace_tools, node_editor)
 		results.append({"call": call, "result": result})
 	var text := "工具执行结果：\n" + JSON.stringify(results, "\t")
 	_add_assistant_message("[color=#42ffc2]工具执行完成[/color]\n" + text)
@@ -793,6 +972,40 @@ func _process_tool_calls(response: String) -> void:
 		GoGentSingleton.get_instance().api_manager.send_chat_request(_build_request_messages())
 	else:
 		_auto_tool_round = 0
+
+func _execute_single_tool(call: Dictionary, workspace_tools, node_editor) -> Dictionary:
+	var tool := str(call.get("tool", call.get("name", ""))).strip_edges()
+	var args: Dictionary = call.get("args", call.get("arguments", {}))
+	# 先尝试 workspace_tools（文件操作类）
+	if workspace_tools != null:
+		match tool:
+			"list_files", "read_file", "write_file", "append_file", "search_text", "console":
+				return workspace_tools.execute_tool_call(call)
+	# 再尝试 node_editor（场景节点编辑类）
+	if node_editor != null:
+		match tool:
+			"editor_info":
+				return node_editor.get_editor_info()
+			"list_scene_nodes":
+				return node_editor.list_scene_nodes(str(args.get("scene_path", "")), bool(args.get("include_properties", false)))
+			"create_scene":
+				return node_editor.create_scene(str(args.get("scene_path", "")), str(args.get("root_node_class", "Node2D")))
+			"add_node":
+				return node_editor.add_node(str(args.get("node_class", "Node2D")), str(args.get("parent_path", "")), str(args.get("node_name", "")), str(args.get("scene_path", "")))
+			"set_node_property", "set_node_prop":
+				return node_editor.set_node_property(str(args.get("node_path", "")), str(args.get("property_name", "")), str(args.get("property_value", "")), str(args.get("scene_path", "")))
+			"delete_node":
+				return node_editor.delete_node(str(args.get("node_path", "")), str(args.get("scene_path", "")))
+			"select_node":
+				return node_editor.select_node(str(args.get("node_path", "")), str(args.get("scene_path", "")))
+			"attach_script":
+				return node_editor.attach_script(str(args.get("node_path", "")), str(args.get("script_path", "")), str(args.get("scene_path", "")))
+			"check_errors":
+				return node_editor.check_errors(str(args.get("scan_path", "res://")))
+	# 回退到 workspace_tools 的通用执行
+	if workspace_tools != null:
+		return workspace_tools.execute_tool_call(call)
+	return {"success": false, "error": "未知工具且无可用执行器: %s" % tool}
 
 func _extract_tool_calls(text: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
@@ -970,6 +1183,13 @@ func _on_human_feedback_recorded(action: int, reward: float, note: String) -> vo
 		GoGentSingleton.print_gogent_console("人工反馈: " + note, "success")
 	_ensure_chart()
 
+func _on_training_ai_adjusted(params: Dictionary) -> void:
+	var parts := PackedStringArray()
+	for key in params.keys():
+		parts.append("%s=%.6f" % [key, float(params[key])])
+	_training_status.text = "AI 调参: " + ", ".join(parts)
+	GoGentSingleton.print_gogent_console("AI 自动调参: " + JSON.stringify(params), "success")
+
 func _parse_json_array(text: String) -> Array:
 	var parsed = JSON.parse_string(text.strip_edges())
 	if parsed is Array:
@@ -1093,9 +1313,11 @@ func _show_tutorial_if_needed() -> void:
 	var dialog := AcceptDialog.new()
 	dialog.title = "GoGent 使用教程"
 	dialog.min_size = Vector2(620, 460)
+	# 直接添加 RichTextLabel，设置 SIZE_SHRINK_BEGIN 防止撑满对话框
 	var text := RichTextLabel.new()
 	text.bbcode_enabled = true
-	text.fit_content = true
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	text.text = "[b]欢迎使用 GoGent[/b]\n\n1. 在设置中选择语言、模型供应商、API Key、代理和 Claude/Codex 命令。\n2. 在对话页输入任务，AI 可以通过 <gogent_tool> 调用工具读取/写入项目文件。\n3. 在场景页可以创建场景、添加节点、设置属性和挂载脚本。\n4. 在训练页可以启动训练并记录人工反馈。\n5. 通过 Skill ZIP 可以导入新的技能模板。\n\n默认语言为中文；教程只会在第一次打开时显示。"
 	dialog.add_child(text)
 	add_child(dialog)

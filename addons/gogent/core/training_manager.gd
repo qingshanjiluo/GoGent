@@ -7,6 +7,7 @@ signal training_episode_completed(episode: int, reward: float, epsilon: float)
 signal training_completed(stats: Dictionary)
 signal training_error(error_msg: String)
 signal human_feedback_recorded(action: int, reward: float, note: String)
+signal training_ai_adjusted(params: Dictionary)  # AI 自动调整参数后发出
 
 enum TrainingState { IDLE, RUNNING, PAUSED, COMPLETED, ERROR }
 
@@ -23,6 +24,10 @@ class TrainingConfig:
 	var memory_size := 2000
 	var save_interval := 0
 	var model_path := "res://addons/gogent/config/trained_models/"
+	# AI 自动调参配置
+	var ai_tuning_enabled := false       # 是否启用 AI 自动调参
+	var ai_tuning_interval := 10         # 每 N 个 episode 调一次
+	var ai_tuning_prompt := ""           # 自定义调参提示词（可选）
 
 	func to_dict() -> Dictionary:
 		return {
@@ -37,7 +42,10 @@ class TrainingConfig:
 			"batch_size": batch_size,
 			"memory_size": memory_size,
 			"save_interval": save_interval,
-			"model_path": model_path
+			"model_path": model_path,
+			"ai_tuning_enabled": ai_tuning_enabled,
+			"ai_tuning_interval": ai_tuning_interval,
+			"ai_tuning_prompt": ai_tuning_prompt
 		}
 
 class TrainingStats:
@@ -212,6 +220,12 @@ func _apply_config(values: Dictionary) -> void:
 				config.memory_size = max(1, int(values[key]))
 			"save_interval":
 				config.save_interval = max(0, int(values[key]))
+			"ai_tuning_enabled":
+				config.ai_tuning_enabled = bool(values[key])
+			"ai_tuning_interval":
+				config.ai_tuning_interval = max(1, int(values[key]))
+			"ai_tuning_prompt":
+				config.ai_tuning_prompt = str(values[key])
 
 func _run_training_loop(token: int) -> void:
 	while token == _run_token and state == TrainingState.RUNNING and stats.episode < config.episodes:
@@ -221,6 +235,9 @@ func _run_training_loop(token: int) -> void:
 		visualizer.record_reward(stats.episode, reward, stats.avg_reward, stats.max_reward)
 		visualizer.record_epsilon(stats.episode, stats.epsilon)
 		training_episode_completed.emit(stats.episode, reward, stats.epsilon)
+		# AI 自动调参：每 ai_tuning_interval 个 episode 调用一次 AI 分析并调整超参数
+		if config.ai_tuning_enabled and stats.episode % config.ai_tuning_interval == 0:
+			_ai_adjust_parameters()
 		if config.save_interval > 0 and stats.episode % config.save_interval == 0:
 			save_model()
 		var tree = GoGentSingleton.get_instance().get_scene_tree()
@@ -288,3 +305,160 @@ func _best_action(key: String) -> int:
 		if values[i] > values[best]:
 			best = i
 	return best
+
+# ─── AI 自动调参 ─────────────────────────────────────────────
+# 每次 episode 完成后调用 AI API 分析训练数据并建议超参数调整
+func _ai_adjust_parameters() -> void:
+	var singleton = GoGentSingleton.get_instance()
+	var api = singleton.api_manager
+	if api == null:
+		return
+	# 收集最近一段训练数据用于 AI 分析
+	var recent_rewards := _collect_recent_rewards(20)
+	var avg_reward := 0.0 if recent_rewards.is_empty() else (stats.total_reward / float(max(1, stats.episode)))
+	var recent_avg := 0.0
+	if not recent_rewards.is_empty():
+		var s := 0.0
+		for r in recent_rewards:
+			s += r
+		recent_avg = s / recent_rewards.size()
+	var prompt := config.ai_tuning_prompt
+	if prompt.is_empty():
+		prompt = "你是一个强化学习训练调参专家。分析以下训练数据，返回 JSON 格式的参数调整建议。只返回 JSON，不要其他文字。\n\n"
+	else:
+		prompt += "\n\n"
+	prompt += """当前训练参数：
+- learning_rate: %.6f
+- discount_factor: %.2f
+- exploration_rate: %.4f
+- exploration_decay: %.4f
+- min_exploration_rate: %.4f
+- batch_size: %d
+
+训练统计（第 %d 个 episode）：
+- 总平均奖励: %.4f
+- 最近 %d 个 episode 平均奖励: %.4f
+- 最大奖励: %.4f
+- 最小奖励: %.4f
+- Q 表大小: %d
+- 经验回放池大小: %d
+- 人工反馈数: %d
+
+请分析训练趋势并返回 JSON：
+{
+  "analysis": "简短分析当前训练状态",
+  "suggestions": {
+    "learning_rate": 建议值或 null,
+    "discount_factor": 建议值或 null,
+    "exploration_rate": 建议值或 null,
+    "exploration_decay": 建议值或 null,
+    "min_exploration_rate": 建议值或 null,
+    "batch_size": 建议值或 null
+  },
+  "reasoning": "每个参数调整的理由"
+}""" % [
+		config.learning_rate,
+		config.discount_factor,
+		config.exploration_rate,
+		config.exploration_decay,
+		config.min_exploration_rate,
+		config.batch_size,
+		stats.episode,
+		avg_reward,
+		recent_rewards.size(),
+		recent_avg,
+		stats.max_reward,
+		stats.min_reward,
+		_q_table.size(),
+		replay_buffer.size(),
+		human_feedback.size()
+	]
+	var messages: Array[Dictionary] = [
+		{"role": "system", "content": "你是强化学习训练调参专家。只返回 JSON 格式数据，不要其他文字。必须包含 json 关键词。"},
+		{"role": "user", "content": prompt}
+	]
+	# 使用非流式请求获取 AI 建议
+	# 注意：不使用 json_mode=true，因为 DeepSeek 等供应商要求 prompt 包含 "json" 字样
+	# 改为在 prompt 中明确要求 JSON 格式，兼容性更好
+	api.send_chat_request(messages, {
+		"temperature": 0.3,
+		"max_tokens": 1024
+	})
+	# 注意：这里使用 call_deferred 监听结果，因为 send_chat_request 是异步的
+	# 但由于 training loop 是协程，我们直接 await 一个一次性信号连接
+	var adjusted := await _wait_for_ai_tuning_result(api)
+	if not adjusted.is_empty():
+		_apply_ai_tuning(adjusted)
+
+func _collect_recent_rewards(count: int) -> Array[float]:
+	var result: Array[float] = []
+	var data = visualizer.get_reward_data()
+	if data.is_empty():
+		return result
+	var start := max(0, data.size() - count)
+	for i in range(start, data.size()):
+		result.append(float(data[i]))
+	return result
+
+func _wait_for_ai_tuning_result(api) -> Dictionary:
+	var result: Dictionary = {}
+	var callback := func(success: bool, response: String, _thinking: String):
+		if success and not response.is_empty():
+			var parsed = JSON.parse_string(response.strip_edges())
+			if parsed is Dictionary:
+				result = parsed
+	api.request_completed.connect(callback, CONNECT_ONE_SHOT)
+	await api.request_completed
+	return result
+
+func _apply_ai_tuning(ai_response: Dictionary) -> void:
+	var suggestions: Dictionary = ai_response.get("suggestions", {})
+	if suggestions.is_empty():
+		return
+	var changed: Dictionary = {}
+	for key in suggestions.keys():
+		var val = suggestions[key]
+		if val == null:
+			continue
+		match key:
+			"learning_rate":
+				var v := clamp(float(val), 0.000001, 1.0)
+				if abs(v - config.learning_rate) > 0.0001:
+					config.learning_rate = v
+					changed[key] = v
+			"discount_factor":
+				var v := clamp(float(val), 0.0, 1.0)
+				if abs(v - config.discount_factor) > 0.01:
+					config.discount_factor = v
+					changed[key] = v
+			"exploration_rate":
+				var v := clamp(float(val), config.min_exploration_rate, 1.0)
+				if abs(v - config.exploration_rate) > 0.01:
+					config.exploration_rate = v
+					stats.epsilon = v
+					changed[key] = v
+			"exploration_decay":
+				var v := clamp(float(val), 0.5, 1.0)
+				if abs(v - config.exploration_decay) > 0.001:
+					config.exploration_decay = v
+					changed[key] = v
+			"min_exploration_rate":
+				var v := clamp(float(val), 0.0, 1.0)
+				if abs(v - config.min_exploration_rate) > 0.01:
+					config.min_exploration_rate = v
+					changed[key] = v
+			"batch_size":
+				var v := max(1, int(val))
+				if v != config.batch_size:
+					config.batch_size = v
+					changed[key] = v
+	if not changed.is_empty():
+		var analysis := str(ai_response.get("analysis", ""))
+		var reasoning := str(ai_response.get("reasoning", ""))
+		var msg := "AI 调参 (episode %d): %s" % [stats.episode, JSON.stringify(changed)]
+		if not analysis.is_empty():
+			msg += "\n分析: %s" % analysis
+		if not reasoning.is_empty():
+			msg += "\n理由: %s" % reasoning
+		GoGentSingleton.print_gogent_console(msg, "success")
+		training_ai_adjusted.emit(changed)
