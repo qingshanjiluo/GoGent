@@ -1,0 +1,37 @@
+# Godot 项目文件
+.godot/
+*.import
+*.uid
+import/
+*.translation
+
+# 插件配置（保留插件代码，忽略运行时生成的文件）
+addons/gogent/config/*.json
+addons/gogent/config/*.cfg
+
+# 训练模型文件
+models/
+*.h5
+*.pth
+*.pt
+
+# 操作系统文件
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志和临时文件
+*.log
+*.tmp
+*.temp
+
+# Godot 导出
+export/
+exports/
