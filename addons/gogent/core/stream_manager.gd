@@ -24,6 +24,9 @@ class StreamState:
 	var thinking := ""
 	var timeout := 90.0
 	var last_activity := 0.0
+	# 流式 JSON 校验相关
+	var tool_calls_buffer: String = ""  # 累积的工具调用 JSON
+	var pending_tool_calls: Array[Dictionary] = []  # 已完成的工具调用
 
 var _streams: Dictionary = {}
 var _next_request_id := 1
@@ -162,9 +165,155 @@ func _apply_delta(state: StreamState, data: Dictionary) -> void:
 		var thought := str(reasoning)
 		state.thinking += thought
 		stream_thinking_chunk.emit(thought, state.request_id)
+
+	# 处理工具调用（流式累积）
+	var tool_calls_data = delta.get("tool_calls", null)
+	if tool_calls_data != null and tool_calls_data is Array:
+		_process_tool_calls_delta(state, tool_calls_data)
+
 	var finish = choice.get("finish_reason", null)
 	if finish != null:
+		# 在完成时尝试解析累积的工具调用 JSON
+		_finalize_tool_calls(state)
 		_finish(state.request_id)
+
+## 处理流式工具调用 delta
+## 参考 OpenAI 的流式工具调用格式：tool_calls[i].function.arguments 是分块传输的
+func _process_tool_calls_delta(state: StreamState, tool_calls_data: Array) -> void:
+	for tc_data in tool_calls_data:
+		if not (tc_data is Dictionary):
+			continue
+		var index := int(tc_data.get("index", 0))
+		var func_data = tc_data.get("function", {})
+		if func_data is Dictionary:
+			var name := str(func_data.get("name", ""))
+			var args_chunk := str(func_data.get("arguments", ""))
+			var tc_id := str(tc_data.get("id", ""))
+
+			# 确保 pending_tool_calls 数组足够大
+			while state.pending_tool_calls.size() <= index:
+				state.pending_tool_calls.append({
+					"id": "",
+					"type": "function",
+					"function": {"name": "", "arguments": ""}
+				})
+
+			var tc := state.pending_tool_calls[index]
+			if not tc_id.is_empty():
+				tc["id"] = tc_id
+			if not name.is_empty():
+				tc["function"]["name"] = name
+			if not args_chunk.is_empty():
+				tc["function"]["arguments"] += args_chunk
+
+## 在流结束时最终化工具调用
+## 校验累积的 JSON 参数是否完整
+func _finalize_tool_calls(state: StreamState) -> void:
+	if state.pending_tool_calls.is_empty():
+		return
+
+	# 尝试验证每个工具调用的 arguments 是否为完整 JSON
+	for tc in state.pending_tool_calls:
+		var args_str := str(tc.get("function", {}).get("arguments", ""))
+		if args_str.is_empty():
+			continue
+		# 校验 JSON 完整性
+		if _is_valid_json_string(args_str):
+			var parsed = JSON.parse_string(args_str)
+			if parsed != null:
+				tc["function"]["arguments"] = parsed
+		else:
+			# JSON 不完整，尝试修复
+			var fixed := _try_fix_json(args_str)
+			if fixed != null:
+				tc["function"]["arguments"] = fixed
+			# 如果修复失败，保留原始字符串
+
+## 校验 JSON 字符串是否完整（括号匹配 + 引号匹配）
+## 防止流式传输中 JSON 被截断导致解析失败
+static func _is_valid_json_string(json_str: String) -> bool:
+	var brace_count := 0
+	var bracket_count := 0
+	var in_string := false
+	var escape_next := false
+
+	for i in range(json_str.length()):
+		var ch := json_str[i]
+
+		if escape_next:
+			escape_next = false
+			continue
+
+		if ch == "\\":
+			escape_next = true
+			continue
+
+		if ch == "\"":
+			in_string = not in_string
+			continue
+
+		if in_string:
+			continue
+
+		match ch:
+			"{":
+				brace_count += 1
+			"}":
+				brace_count -= 1
+				if brace_count < 0:
+					return false
+			"[":
+				bracket_count += 1
+			"]":
+				bracket_count -= 1
+				if bracket_count < 0:
+					return false
+
+	return brace_count == 0 and bracket_count == 0 and not in_string
+
+## 尝试修复不完整的 JSON（补充缺失的括号）
+static func _try_fix_json(json_str: String) -> Variant:
+	var fixed := json_str.strip_edges()
+
+	# 计算缺失的括号数
+	var open_braces := 0
+	var close_braces := 0
+	var open_brackets := 0
+	var close_brackets := 0
+	var in_str := false
+	var esc := false
+
+	for i in range(fixed.length()):
+		var ch := fixed[i]
+		if esc:
+			esc = false
+			continue
+		if ch == "\\":
+			esc = true
+			continue
+		if ch == "\"":
+			in_str = not in_str
+			continue
+		if in_str:
+			continue
+		match ch:
+			"{": open_braces += 1
+			"}": close_braces += 1
+			"[": open_brackets += 1
+			"]": close_brackets += 1
+
+	# 补充缺失的闭合括号
+	for _i in range(open_braces - close_braces):
+		fixed += "}"
+	for _i in range(open_brackets - close_brackets):
+		fixed += "]"
+
+	if fixed != json_str:
+		var parsed = JSON.parse_string(fixed)
+		if parsed != null:
+			return parsed
+
+	return null
 
 func _finish(request_id: int) -> void:
 	if not _streams.has(request_id):

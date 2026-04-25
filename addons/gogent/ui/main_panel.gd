@@ -4,6 +4,8 @@ extends Control
 
 const MESSAGE_SCENE := preload("res://addons/gogent/ui/chat/message_item.tscn")
 const AGENT_EDITOR_SCENE := preload("res://addons/gogent/ui/agent_editor/agent_editor_panel.tscn")
+const PLAN_LIST_SCENE := preload("res://addons/gogent/ui/plan_list/plan_list.tscn")
+const DIFF_VIEWER_SCENE := preload("res://addons/gogent/ui/diff/diff_viewer.tscn")
 
 var _containers: Dictionary = {}
 var _tab_buttons: Dictionary = {}
@@ -87,12 +89,29 @@ var _stream_text := ""
 var _stream_thinking := ""
 var _chart_control: Control
 
+# 新 UI 组件
+var _plan_list: GoGentPlanList
+var _edited_files_container: GoGentEditedFilesContainer
+var _plan_list_container: VBoxContainer  # 计划列表在聊天区域的容器
+
 func _ready() -> void:
 	if get_child_count() == 0:
 		_build_ui()
 	_connect_signals()
 	refresh_from_managers()
+	# 初始化新组件
+	_init_new_components()
 	_show_tutorial_if_needed.call_deferred()
+
+func _init_new_components() -> void:
+	var singleton = GoGentSingleton.get_instance()
+	# 初始化工具注册器
+	singleton.init_tool_registry(self)
+	# 初始化计划列表
+	if _plan_list_container and _plan_list == null:
+		_plan_list = PLAN_LIST_SCENE.instantiate()
+		_plan_list_container.add_child(_plan_list)
+		singleton.plan_list = _plan_list
 
 func _process(delta: float) -> void:
 	var stream = GoGentSingleton.get_instance().stream_manager
@@ -207,6 +226,13 @@ func _build_chat(parent: Control) -> Control:
 	_message_list = VBoxContainer.new()
 	_message_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_message_scroll.add_child(_message_list)
+
+	# 计划列表容器（在消息列表和输入框之间）
+	_plan_list_container = VBoxContainer.new()
+	_plan_list_container.custom_minimum_size = Vector2(0, 0)
+	_plan_list_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_plan_list_container.visible = false
+	box.add_child(_plan_list_container)
 
 	var input_panel := PanelContainer.new()
 	box.add_child(input_panel)
@@ -1037,6 +1063,25 @@ func _build_tool_system_prompt() -> String:
 	lines.append("  - 查看状态：{\"tool\":\"get_training_status\",\"args\":{}}")
 	lines.append("  - 记录反馈：{\"tool\":\"record_feedback\",\"args\":{\"action\":1,\"reward\":0.5,\"note\":\"good\"}}")
 	lines.append("")
+	lines.append("### 特殊字符标记（重要）")
+	lines.append("在工具调用的参数中，使用以下标记代替特殊字符，避免 JSON 转义问题：")
+	lines.append("- {GOGENT_NEWLINE_CHAR} = 换行符")
+	lines.append("- {GOGENT_TAB_CHAR} = 制表符")
+	lines.append("- {GOGENT_DQUOTE_CHAR} = 双引号")
+	lines.append("- {GOGENT_QUOTE_CHAR} = 单引号")
+	lines.append("- {GOGENT_BACKSLASH_CHAR} = 反斜杠")
+	lines.append("")
+	lines.append("例如写入多行代码：")
+	lines.append("  {\"tool\":\"write_file\",\"args\":{\"path\":\"res://script.gd\",\"content\":\"extends Node{GOGENT_NEWLINE_CHAR}{GOGENT_NEWLINE_CHAR}func _ready():{GOGENT_NEWLINE_CHAR}    print({GOGENT_DQUOTE_CHAR}Hello{GOGENT_DQUOTE_CHAR})\"}}")
+	lines.append("")
+	lines.append("### 计划列表")
+	lines.append("在制定方案阶段，使用 <plan_list> 标签输出计划项：")
+	lines.append("  <plan_list>")
+	lines.append("  - 步骤1：具体描述")
+	lines.append("  - 步骤2：具体描述")
+	lines.append("  </plan_list>")
+	lines.append("系统会自动解析并显示在计划面板中。")
+	lines.append("")
 	lines.append("## 工作流程建议")
 	lines.append("1. 先用 list_files 查看项目结构")
 	lines.append("2. 用 read_file / read_file_lines 读取关键文件了解代码")
@@ -1051,20 +1096,45 @@ func _process_tool_calls(response: String) -> void:
 	var cfg = GoGentSingleton.get_instance().config_manager
 	if cfg == null or not bool(cfg.get_setting("auto_apply_tool_calls", true)):
 		return
+
+	# 1. 解析计划列表（如果有）
+	_process_plan_list(response)
+
+	# 2. 提取工具调用
 	var calls := _extract_tool_calls(response)
 	if calls.is_empty():
 		_auto_tool_round = 0
 		return
-	var workspace_tools = GoGentSingleton.get_instance().workspace_tool_manager
-	var node_editor = GoGentSingleton.get_instance().node_editor_manager
+
+	# 3. 解码特殊字符标记
+	for call in calls:
+		if call.has("args"):
+			call["args"] = GoGentEscapeUtils.decode_json(call["args"])
+		if call.has("arguments"):
+			call["arguments"] = GoGentEscapeUtils.decode_json(call["arguments"])
+
+	var singleton = GoGentSingleton.get_instance()
+	var workspace_tools = singleton.workspace_tool_manager
+	var node_editor = singleton.node_editor_manager
+	var temp_manager = singleton.temp_file_manager
 	var results: Array[Dictionary] = []
 	var tool_delay := int(cfg.get_setting("tool_call_delay_ms", 200))
+
 	for call in calls:
+		# 4. 对 write_file 等修改操作创建临时备份
+		var tool_name := str(call.get("tool", call.get("name", ""))).strip_edges()
+		var args: Dictionary = call.get("args", call.get("arguments", {}))
+		if tool_name in ["write_file", "replace_lines", "append_file"] and args.has("path"):
+			var file_path := str(args.get("path", ""))
+			if not file_path.is_empty() and temp_manager != null:
+				temp_manager.create_temp_file(file_path)
+
 		var result := _execute_single_tool(call, workspace_tools, node_editor)
 		results.append({"call": call, "result": result})
 		# 工具调用间隔延迟，避免卡死
 		if tool_delay > 0:
 			OS.delay_msec(tool_delay)
+
 	var raw_text := JSON.stringify(results, "\t")
 	# 截断过长的工具结果，避免上下文超长导致 AI 输出被截断
 	var MAX_TOOL_RESULT_LENGTH := 8000
@@ -1085,6 +1155,24 @@ func _process_tool_calls(response: String) -> void:
 		GoGentSingleton.get_instance().api_manager.send_chat_request(_build_request_messages())
 	else:
 		_auto_tool_round = 0
+
+## 解析回复中的计划列表并更新 UI
+func _process_plan_list(response: String) -> void:
+	if not GoGentWorkflowRole.has_plan_list(response):
+		return
+	var items := GoGentWorkflowRole.parse_plan_list(response)
+	if items.is_empty():
+		return
+	if _plan_list == null:
+		var singleton = GoGentSingleton.get_instance()
+		if _plan_list_container:
+			_plan_list = PLAN_LIST_SCENE.instantiate()
+			_plan_list_container.add_child(_plan_list)
+			singleton.plan_list = _plan_list
+	if _plan_list:
+		_plan_list.clear()
+		_plan_list.add_items(items)
+		_plan_list_container.visible = true
 
 func _execute_single_tool(call: Dictionary, workspace_tools, node_editor) -> Dictionary:
 	var tool := str(call.get("tool", call.get("name", ""))).strip_edges()

@@ -23,6 +23,11 @@ var node_editor_manager
 var conversation_manager
 var workspace_tool_manager
 
+# 新组件
+var tool_registry: GoGentToolRegistry          # 工具注册器（场景树自动注册）
+var temp_file_manager: GoGentTempFileManager    # 临时文件回滚管理器
+var plan_list: GoGentPlanList                   # 计划列表 UI
+
 const ConfigManagerScript := preload("res://addons/gogent/core/config_manager.gd")
 const ModelManagerScript := preload("res://addons/gogent/core/model_manager.gd")
 const AgentManagerScript := preload("res://addons/gogent/core/agent_manager.gd")
@@ -59,7 +64,32 @@ func load_all_configs() -> void:
 	node_editor_manager = NodeEditorManagerScript.new()
 	conversation_manager = ConversationManagerScript.new()
 	workspace_tool_manager = WorkspaceToolManagerScript.new()
+
+	# 初始化新组件
+	temp_file_manager = GoGentTempFileManager.new()
+	GoGentTempFileManager.cleanup_old_temp_files()
+
 	print_gogent_console("All GoGent managers loaded.", "success")
+
+## 初始化工具注册器（需要在场景树就绪后调用）
+func init_tool_registry(parent_node: Node) -> void:
+	if tool_registry != null:
+		return
+	# 加载 tools.tscn 场景
+	var tools_scene = preload("res://addons/gogent/tools/tools.tscn")
+	var tools_instance = tools_scene.instantiate()
+	parent_node.add_child(tools_instance)
+	tool_registry = tools_instance as GoGentToolRegistry
+	print_gogent_console("Tool registry initialized with %d tools." % tool_registry.get_tool_count(), "success")
+
+## 初始化计划列表（需要在场景树就绪后调用）
+func init_plan_list(parent_node: Node) -> GoGentPlanList:
+	if plan_list != null:
+		return plan_list
+	var plan_scene = preload("res://addons/gogent/ui/plan_list/plan_list.tscn")
+	plan_list = plan_scene.instantiate()
+	parent_node.add_child(plan_list)
+	return plan_list
 
 func get_scene_tree() -> SceneTree:
 	if main_panel != null:

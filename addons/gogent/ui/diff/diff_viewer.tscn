@@ -1,0 +1,38 @@
+[gd_scene load_steps=2 format=3 uid="uid://dg0xq0v5m0l6x"]
+
+[ext_resource type="Script" path="res://addons/gogent/ui/diff/diff_viewer.gd" id="1_diff_viewer"]
+
+[node name="DiffViewer" type="VBoxContainer"]
+custom_minimum_size = Vector2(400, 0)
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 2
+
+[node name="Header" type="HBoxContainer" parent="."]
+custom_minimum_size = Vector2(0, 28)
+size_flags_horizontal = 3
+
+[node name="FileLabel" type="Label" parent="Header"]
+size_flags_horizontal = 3
+mouse_filter = 0
+text = "文件路径"
+add_theme_font_size_override = "font_size", 12
+
+[node name="AcceptBtn" type="Button" parent="Header"]
+text = "✓ 接受"
+add_theme_color_override = "font_color", Color(0.26, 1, 0.76)
+
+[node name="RollbackBtn" type="Button" parent="Header"]
+text = "↩ 回滚"
+add_theme_color_override = "font_color", Color(1, 0.44, 0.52)
+
+[node name="StatsLabel" type="Label" parent="."]
+custom_minimum_size = Vector2(0, 20)
+size_flags_horizontal = 3
+text = "+0  -0  0行不变"
+add_theme_font_size_override = "font_size", 11
+
+[node name="LineContainer" type="VBoxContainer" parent="."]
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 0

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c6qy5k2f3h4d7"]
+
+[ext_resource type="Script" path="res://addons/gogent/tools/tool_registry.gd" id="1_tool_registry"]
+
+[node name="Tools" type="Node"]
+script = 1
