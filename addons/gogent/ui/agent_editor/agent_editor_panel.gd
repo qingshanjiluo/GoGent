@@ -1,530 +1,342 @@
 @tool
 class_name GoGentAgentEditorPanel
-extends Control
+extends HSplitContainer
 
-## 自定义 Agent 创建 UI
-## 提供可视化界面来创建、编辑和管理 AI Agent
-## 支持自定义系统提示词、模型选择、技能分配等
-
-# 信号
 signal agent_created(agent_data: Dictionary)
 signal agent_updated(agent_id: String, agent_data: Dictionary)
 signal agent_deleted(agent_id: String)
 signal agent_selected(agent_id: String)
 
-# UI 节点
-@onready var agent_list: ItemList = %AgentList
-@onready var agent_name_input: LineEdit = %AgentNameInput
-@onready var agent_role_input: LineEdit = %AgentRoleInput
-@onready var system_prompt_edit: TextEdit = %SystemPromptEdit
-@onready var model_option: OptionButton = %ModelOption
-@onready var temperature_slider: HSlider = %TemperatureSlider
-@onready var temperature_label: Label = %TemperatureLabel
-@onready var max_tokens_spin: SpinBox = %MaxTokensSpin
-@onready var auto_respond_toggle: CheckButton = %AutoRespondToggle
-@onready var skill_list: VBoxContainer = %SkillList
-@onready var save_button: Button = %SaveButton
-@onready var delete_button: Button = %DeleteButton
-@onready var new_button: Button = %NewButton
-@onready var preview_text: RichTextLabel = %PreviewText
-@onready var search_input: LineEdit = %SearchInput
+var agent_list: ItemList
+var search_input: LineEdit
+var name_input: LineEdit
+var role_input: LineEdit
+var prompt_edit: TextEdit
+var temperature_slider: HSlider
+var temperature_label: Label
+var max_tokens_spin: SpinBox
+var enabled_toggle: CheckButton
+var auto_toggle: CheckButton
+var skill_list: VBoxContainer
+var preview: RichTextLabel
+var delete_button: Button
 
-# 预设模板
-const AGENT_TEMPLATES = {
-	"code_reviewer": {
-		"name": "代码审查员",
-		"role": "Godot GDScript 代码审查专家",
-		"system_prompt": """你是一位资深的 Godot 4.x 代码审查专家。
-
-## 核心职责
-- 审查 GDScript 代码质量和性能
-- 发现潜在的内存泄漏和性能瓶颈
-- 确保代码符合 Godot 最佳实践
-- 提供具体的优化建议和代码示例
-
-## 审查重点
-1. 节点引用和内存管理
-2. 信号连接的生命周期
-3. 场景树操作效率
-4. 类型安全性和 null 检查
-5. 内置类型（Vector2, Color 等）的正确使用
-
-## 输出格式
-- 问题严重性：[严重/重要/建议]
-- 问题位置：文件:行号
-- 问题描述
-- 改进建议（附代码示例）""",
-		"temperature": 0.3,
-		"max_tokens": 4096,
-		"auto_respond": false,
-		"skills": ["代码审查"]
-	},
-	"game_designer": {
-		"name": "游戏策划师",
-		"role": "游戏策划与设计专家",
-		"system_prompt": """你是一位富有创意的游戏策划专家。
-
-## 核心能力
-- 游戏机制设计与平衡
-- 数值系统规划
-- 关卡设计
-- 用户体验优化
-- 游戏经济系统设计
-
-## 设计原则
-1. 以玩家体验为中心
-2. 渐进式难度曲线
-3. 正反馈循环
-4. 清晰的游戏目标
-5. 有意义的玩家选择
-
-## 输出格式
-- 设计概念概述
-- 核心机制说明
-- 数值框架
-- 实现建议""",
-		"temperature": 0.8,
-		"max_tokens": 8192,
-		"auto_respond": false,
-		"skills": ["游戏设计"]
-	},
-	"qa_tester": {
-		"name": "QA 测试工程师",
-		"role": "游戏质量保证专家",
-		"system_prompt": """你是一位专业的 QA 测试工程师，擅长游戏测试和质量管理。
-
-## 核心职责
-- 设计全面的测试方案
-- 发现和报告 Bug
-- 性能分析和优化建议
-- 自动化测试脚本编写
-
-## 测试方法论
-1. 功能测试：验证所有功能按预期工作
-2. 边界测试：测试输入边界条件
-3. 压力测试：测试极限情况下的表现
-4. 兼容性测试：不同平台和配置
-5. 回归测试：确保修复不引入新问题
-
-## Bug 报告格式
-- 严重性：Critical/Major/Minor
-- 重现步骤
-- 实际结果 vs 预期结果
-- 环境信息
-- 截图/日志（如适用）""",
-		"temperature": 0.4,
-		"max_tokens": 4096,
-		"auto_respond": false,
-		"skills": ["游戏测试"]
-	},
-	"ai_trainer": {
-		"name": "AI 训练师",
-		"role": "机器学习与 AI 训练专家",
-		"system_prompt": """你是一位机器学习专家，专注于游戏 AI 训练。
-
-## 核心能力
-- 强化学习算法（DQN, PPO, A2C）
-- 神经网络架构设计
-- 训练策略优化
-- 奖励函数设计
-
-## 训练流程
-1. 环境定义：状态空间、动作空间
-2. 算法选择：根据问题特性选择
-3. 超参数调优：学习率、折扣因子等
-4. 训练监控：奖励曲线、损失曲线
-5. 模型评估：泛化能力测试
-
-## 输出格式
-- 算法选择理由
-- 网络架构说明
-- 超参数配置
-- 训练策略建议""",
-		"temperature": 0.5,
-		"max_tokens": 8192,
-		"auto_respond": false,
-		"skills": ["AI 训练"]
-	},
-	"architect": {
-		"name": "架构师",
-		"role": "Godot 项目架构专家",
-		"system_prompt": """你是一位经验丰富的 Godot 项目架构师。
-
-## 核心能力
-- 项目结构设计
-- 模块化架构规划
-- 性能优化策略
-- 代码复用和扩展性设计
-
-## 架构原则
-1. 单一职责原则
-2. 开闭原则
-3. 依赖倒置原则
-4. 接口隔离原则
-5. 组合优于继承
-
-## 设计重点
-- 场景树结构设计
-- 信号系统设计
-- 资源管理策略
-- 自动加载（Autoload）规划
-- 插件架构设计""",
-		"temperature": 0.4,
-		"max_tokens": 8192,
-		"auto_respond": false,
-		"skills": ["项目脚手架", "深度分析"]
-	}
-}
-
-var _current_agent_id: String = ""
-var _is_editing: bool = false
-var _all_skills: Array = []
+var _current_agent_id := ""
 
 func _ready() -> void:
-	_connect_signals()
-	_load_skills()
-	_load_agents()
-	_update_preview()
+	if get_child_count() == 0:
+		_build_ui()
+	_connect_singleton_signals()
+	refresh()
 
-func _connect_signals() -> void:
-	save_button.pressed.connect(_on_save)
-	delete_button.pressed.connect(_on_delete)
-	new_button.pressed.connect(_on_new)
-	agent_list.item_selected.connect(_on_agent_selected)
-	agent_name_input.text_changed.connect(_update_preview)
-	agent_role_input.text_changed.connect(_update_preview)
-	system_prompt_edit.text_changed.connect(_update_preview)
-	temperature_slider.value_changed.connect(func(v):
-		temperature_label.text = "{0:.2f}".format([v])
+func _build_ui() -> void:
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	var left := VBoxContainer.new()
+	left.custom_minimum_size = Vector2(180, 0)
+	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	add_child(left)
+
+	search_input = LineEdit.new()
+	search_input.placeholder_text = "Search agents"
+	search_input.text_changed.connect(_filter_agents)
+	left.add_child(search_input)
+
+	agent_list = ItemList.new()
+	agent_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	agent_list.item_selected.connect(_select_agent)
+	left.add_child(agent_list)
+
+	var left_actions := HBoxContainer.new()
+	left.add_child(left_actions)
+	var new_button := Button.new()
+	new_button.text = "New"
+	new_button.pressed.connect(_new_agent)
+	left_actions.add_child(new_button)
+	delete_button = Button.new()
+	delete_button.text = "Delete"
+	delete_button.disabled = true
+	delete_button.pressed.connect(_delete_agent)
+	left_actions.add_child(delete_button)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	add_child(scroll)
+	var form := VBoxContainer.new()
+	form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(form)
+
+	name_input = _line(form, "Name")
+	role_input = _line(form, "Role")
+	prompt_edit = TextEdit.new()
+	prompt_edit.custom_minimum_size = Vector2(0, 150)
+	prompt_edit.placeholder_text = "System prompt"
+	prompt_edit.text_changed.connect(_update_preview)
+	form.add_child(_label("System Prompt"))
+	form.add_child(prompt_edit)
+
+	var temp_row := HBoxContainer.new()
+	form.add_child(temp_row)
+	temp_row.add_child(_label("Temperature"))
+	temperature_slider = HSlider.new()
+	temperature_slider.min_value = 0.0
+	temperature_slider.max_value = 2.0
+	temperature_slider.step = 0.01
+	temperature_slider.value = 0.7
+	temperature_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	temperature_slider.value_changed.connect(func(value: float):
+		temperature_label.text = "%.2f" % value
 		_update_preview()
 	)
-	search_input.text_changed.connect(_on_search)
-	
-	# 连接模板按钮
-	var template_buttons = {
-		"code_reviewer": find_child("TemplateCodeReview", true, false),
-		"game_designer": find_child("TemplateGameDesign", true, false),
-		"qa_tester": find_child("TemplateQATest", true, false),
-		"ai_trainer": find_child("TemplateAITrain", true, false),
-		"architect": find_child("TemplateArchitect", true, false)
-	}
-	for template_name in template_buttons.keys():
-		var btn = template_buttons[template_name]
-		if btn:
-			btn.pressed.connect(func(): apply_template(template_name))
-	
-	# 连接导出/导入按钮
-	var export_btn = find_child("ExportButton", true, false)
-	var import_btn = find_child("ImportButton", true, false)
-	if export_btn:
-		export_btn.pressed.connect(_on_export)
-	if import_btn:
-		import_btn.pressed.connect(_on_import)
+	temp_row.add_child(temperature_slider)
+	temperature_label = _label("0.70")
+	temp_row.add_child(temperature_label)
 
-func _load_skills() -> void:
+	var tokens_row := HBoxContainer.new()
+	form.add_child(tokens_row)
+	tokens_row.add_child(_label("Max Tokens"))
+	max_tokens_spin = SpinBox.new()
+	max_tokens_spin.min_value = 256
+	max_tokens_spin.max_value = 131072
+	max_tokens_spin.step = 256
+	max_tokens_spin.value = 8192
+	max_tokens_spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	max_tokens_spin.value_changed.connect(func(_value: float): _update_preview())
+	tokens_row.add_child(max_tokens_spin)
+
+	enabled_toggle = CheckButton.new()
+	enabled_toggle.text = "Enabled"
+	enabled_toggle.button_pressed = true
+	enabled_toggle.toggled.connect(func(_v: bool): _update_preview())
+	form.add_child(enabled_toggle)
+	auto_toggle = CheckButton.new()
+	auto_toggle.text = "Auto respond"
+	auto_toggle.toggled.connect(func(_v: bool): _update_preview())
+	form.add_child(auto_toggle)
+
+	form.add_child(_label("Skills"))
+	skill_list = VBoxContainer.new()
+	form.add_child(skill_list)
+
+	var templates := HBoxContainer.new()
+	form.add_child(templates)
+	for item in [
+		["Code", "Code Assistant", "Godot development expert", "You are a senior Godot 4 engineer. Help write, debug, review, and improve GDScript."],
+		["Design", "Game Designer", "Gameplay designer", "You are a game designer. Help design mechanics, progression, and player experience."],
+		["QA", "QA Tester", "QA engineer", "You are a QA engineer. Create test plans and bug reports for Godot projects."],
+		["AI", "AI Trainer", "RL advisor", "You are an AI training specialist. Help design states, rewards, and training strategy."]
+	]:
+		var btn := Button.new()
+		btn.text = item[0]
+		btn.pressed.connect(func(template = item): _apply_template(template))
+		templates.add_child(btn)
+
+	var actions := HBoxContainer.new()
+	form.add_child(actions)
+	var save_button := Button.new()
+	save_button.text = "Save Agent"
+	save_button.pressed.connect(_save_agent)
+	actions.add_child(save_button)
+	var export_button := Button.new()
+	export_button.text = "Export"
+	export_button.pressed.connect(_export_agent)
+	actions.add_child(export_button)
+	var import_button := Button.new()
+	import_button.text = "Import"
+	import_button.pressed.connect(_import_agent)
+	actions.add_child(import_button)
+
+	preview = RichTextLabel.new()
+	preview.bbcode_enabled = true
+	preview.fit_content = true
+	preview.custom_minimum_size = Vector2(0, 120)
+	form.add_child(preview)
+
+func _connect_singleton_signals() -> void:
 	var singleton = GoGentSingleton.get_instance()
-	if singleton.skill_manager:
-		_all_skills = singleton.skill_manager.skills
-		_populate_skill_checkboxes()
+	if not singleton.agents_changed.is_connected(refresh):
+		singleton.agents_changed.connect(refresh)
 
-func _populate_skill_checkboxes() -> void:
-	# 清空现有技能列表
+func refresh() -> void:
+	_populate_skills()
+	_populate_agents()
+	_update_preview()
+
+func _line(parent: Control, label_text: String) -> LineEdit:
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	row.add_child(_label(label_text))
+	var line := LineEdit.new()
+	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.text_changed.connect(func(_text: String): _update_preview())
+	row.add_child(line)
+	return line
+
+func _label(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.custom_minimum_size = Vector2(92, 0)
+	return label
+
+func _populate_agents() -> void:
+	agent_list.clear()
+	var manager = GoGentSingleton.get_instance().agent_manager
+	if manager == null:
+		return
+	for agent in manager.agents:
+		agent_list.add_item("%s - %s" % [agent.name, agent.role])
+		agent_list.set_item_metadata(agent_list.get_item_count() - 1, agent.id)
+
+func _populate_skills() -> void:
 	for child in skill_list.get_children():
 		child.queue_free()
-	
-	for skill in _all_skills:
-		var hbox = HBoxContainer.new()
-		var check = CheckButton.new()
+	var skill_manager = GoGentSingleton.get_instance().skill_manager
+	if skill_manager == null:
+		return
+	for skill in skill_manager.skills:
+		var check := CheckButton.new()
 		check.text = skill.name
 		check.set_meta("skill_id", skill.id)
-		check.toggled.connect(_on_skill_toggled.bind(skill.id))
-		hbox.add_child(check)
-		skill_list.add_child(hbox)
+		check.toggled.connect(func(_v: bool): _update_preview())
+		skill_list.add_child(check)
 
-func _load_agents() -> void:
-	agent_list.clear()
-	var singleton = GoGentSingleton.get_instance()
-	if singleton.agent_manager:
-		for agent in singleton.agent_manager.agents:
-			agent_list.add_item("{0} ({1})".format([agent.name, agent.role]))
+func _filter_agents(text: String) -> void:
+	for i in range(agent_list.get_item_count()):
+		var visible := text.is_empty() or agent_list.get_item_text(i).to_lower().contains(text.to_lower())
+		agent_list.set_item_disabled(i, not visible)
 
-func _on_agent_selected(index: int) -> void:
-	var singleton = GoGentSingleton.get_instance()
-	if singleton.agent_manager and index >= 0 and index < singleton.agent_manager.agents.size():
-		var agent = singleton.agent_manager.agents[index]
-		_current_agent_id = agent.id
-		_is_editing = true
-		_populate_form(agent)
-		agent_selected.emit(agent.id)
-
-func _populate_form(agent) -> void:
-	agent_name_input.text = agent.name
-	agent_role_input.text = agent.role
-	system_prompt_edit.text = agent.system_prompt
+func _select_agent(index: int) -> void:
+	var manager = GoGentSingleton.get_instance().agent_manager
+	if manager == null:
+		return
+	var agent_id := str(agent_list.get_item_metadata(index))
+	var agent = manager.get_agent(agent_id)
+	if agent == null:
+		return
+	_current_agent_id = agent.id
+	name_input.text = agent.name
+	role_input.text = agent.role
+	prompt_edit.text = agent.system_prompt
 	temperature_slider.value = agent.temperature
-	temperature_label.text = "{0:.2f}".format([agent.temperature])
+	temperature_label.text = "%.2f" % agent.temperature
 	max_tokens_spin.value = agent.max_tokens
-	auto_respond_toggle.button_pressed = agent.auto_respond
-	
-	# 更新技能勾选
+	enabled_toggle.button_pressed = agent.enabled
+	auto_toggle.button_pressed = agent.auto_respond
 	for child in skill_list.get_children():
-		if child is HBoxContainer:
-			var check = child.get_child(0) if child.get_child_count() > 0 else null
-			if check and check is CheckButton:
-				var skill_id = check.get_meta("skill_id", "")
-				check.button_pressed = skill_id in agent.skills
-	
+		var skill_id := str(child.get_meta("skill_id", ""))
+		child.button_pressed = skill_id in agent.skills
+	delete_button.disabled = false
+	_update_preview()
+	agent_selected.emit(agent.id)
+
+func _new_agent() -> void:
+	_current_agent_id = ""
+	name_input.text = ""
+	role_input.text = ""
+	prompt_edit.text = ""
+	temperature_slider.value = 0.7
+	max_tokens_spin.value = 8192
+	enabled_toggle.button_pressed = true
+	auto_toggle.button_pressed = false
+	for child in skill_list.get_children():
+		child.button_pressed = false
+	delete_button.disabled = true
 	_update_preview()
 
-func _on_save() -> void:
-	var name = agent_name_input.text.strip_edges()
-	if name.is_empty():
-		_show_error("请输入 Agent 名称")
+func _save_agent() -> void:
+	var data := _collect_form()
+	if data["name"].is_empty() or data["role"].is_empty() or data["system_prompt"].is_empty():
+		GoGentSingleton.print_gogent_console("Agent name, role, and system prompt are required.", "error")
 		return
-	
-	var role = agent_role_input.text.strip_edges()
-	if role.is_empty():
-		_show_error("请输入 Agent 角色")
+	var manager = GoGentSingleton.get_instance().agent_manager
+	if manager == null:
 		return
-	
-	var system_prompt = system_prompt_edit.text.strip_edges()
-	if system_prompt.is_empty():
-		_show_error("请输入系统提示词")
+	if _current_agent_id.is_empty():
+		var agent = GoGentAgentManager.AgentConfig.new(data["name"], data["role"])
+		manager.add_agent(agent)
+		_current_agent_id = agent.id
+		manager.update_agent(agent.id, data)
+		agent_created.emit(data)
+	else:
+		manager.update_agent(_current_agent_id, data)
+		agent_updated.emit(_current_agent_id, data)
+	GoGentSingleton.print_gogent_console("Agent saved.", "success")
+	refresh()
+
+func _delete_agent() -> void:
+	if _current_agent_id.is_empty():
 		return
-	
-	# 收集选中的技能
-	var selected_skills = []
+	GoGentSingleton.get_instance().agent_manager.remove_agent(_current_agent_id)
+	agent_deleted.emit(_current_agent_id)
+	_new_agent()
+	refresh()
+
+func _collect_form() -> Dictionary:
+	var selected_skills: Array[String] = []
 	for child in skill_list.get_children():
-		if child is HBoxContainer:
-			var check = child.get_child(0) if child.get_child_count() > 0 else null
-			if check and check is CheckButton and check.button_pressed:
-				selected_skills.append(check.get_meta("skill_id", ""))
-	
-	var agent_data = {
-		"name": name,
-		"role": role,
-		"system_prompt": system_prompt,
+		if child is CheckButton and child.button_pressed:
+			selected_skills.append(str(child.get_meta("skill_id", "")))
+	return {
+		"name": name_input.text.strip_edges(),
+		"role": role_input.text.strip_edges(),
+		"system_prompt": prompt_edit.text.strip_edges(),
 		"temperature": temperature_slider.value,
 		"max_tokens": int(max_tokens_spin.value),
-		"auto_respond": auto_respond_toggle.button_pressed,
+		"enabled": enabled_toggle.button_pressed,
+		"auto_respond": auto_toggle.button_pressed,
 		"skills": selected_skills
 	}
-	
-	var singleton = GoGentSingleton.get_instance()
-	if singleton.agent_manager:
-		if _is_editing and not _current_agent_id.is_empty():
-			# 更新现有 Agent
-			var existing = singleton.agent_manager.get_agent(_current_agent_id)
-			if existing:
-				existing.name = agent_data.name
-				existing.role = agent_data.role
-				existing.system_prompt = agent_data.system_prompt
-				existing.temperature = agent_data.temperature
-				existing.max_tokens = agent_data.max_tokens
-				existing.auto_respond = agent_data.auto_respond
-				existing.skills = agent_data.skills
-				singleton.agent_manager.save_agents()
-				agent_updated.emit(_current_agent_id, agent_data)
-				_show_success("Agent 已更新")
-		else:
-			# 创建新 Agent
-			var new_agent = GoGentAgentManager.AgentConfig.new(name, role)
-			new_agent.system_prompt = agent_data.system_prompt
-			new_agent.temperature = agent_data.temperature
-			new_agent.max_tokens = agent_data.max_tokens
-			new_agent.auto_respond = agent_data.auto_respond
-			new_agent.skills = agent_data.skills
-			singleton.agent_manager.add_agent(new_agent)
-			agent_created.emit(agent_data)
-			_show_success("Agent 已创建")
-		
-		_load_agents()
-		_is_editing = false
-		_current_agent_id = ""
-
-func _on_delete() -> void:
-	if _current_agent_id.is_empty():
-		return
-	
-	var singleton = GoGentSingleton.get_instance()
-	if singleton.agent_manager:
-		singleton.agent_manager.remove_agent(_current_agent_id)
-		agent_deleted.emit(_current_agent_id)
-		_load_agents()
-		_clear_form()
-		_show_success("Agent 已删除")
-
-func _on_new() -> void:
-	_clear_form()
-	_is_editing = false
-	_current_agent_id = ""
-
-func _clear_form() -> void:
-	agent_name_input.text = ""
-	agent_role_input.text = ""
-	system_prompt_edit.text = ""
-	temperature_slider.value = 0.7
-	temperature_label.text = "0.70"
-	max_tokens_spin.value = 8192
-	auto_respond_toggle.button_pressed = false
-	
-	for child in skill_list.get_children():
-		if child is HBoxContainer:
-			var check = child.get_child(0) if child.get_child_count() > 0 else null
-			if check and check is CheckButton:
-				check.button_pressed = false
-	
-	_update_preview()
-
-func _on_search(text: String) -> void:
-	# 在 Agent 列表中搜索
-	for i in range(agent_list.get_item_count()):
-		var item_text = agent_list.get_item_text(i)
-		var visible = text.is_empty() or text.to_lower() in item_text.to_lower()
-		agent_list.set_item_disabled(i, not visible)
-		if not visible:
-			agent_list.deselect(i)
-
-func _on_skill_toggled(pressed: bool, skill_id: String) -> void:
-	_update_preview()
 
 func _update_preview() -> void:
-	var name = agent_name_input.text
-	var role = agent_role_input.text
-	var prompt = system_prompt_edit.text
-	var temp = temperature_slider.value
-	var tokens = int(max_tokens_spin.value)
-	
-	var preview = "[b]Agent 预览[/b]\n\n"
-	preview += "[color='#42ffc2']名称:[/color] {0}\n".format([name if name else "(未设置)"])
-	preview += "[color='#42ffc2']角色:[/color] {0}\n".format([role if role else "(未设置)"])
-	preview += "[color='#42ffc2']温度:[/color] {0:.2f}\n".format([temp])
-	preview += "[color='#42ffc2']最大 Token:[/color] {0}\n".format([tokens])
-	
-	# 显示技能
-	var selected_skills = []
-	for child in skill_list.get_children():
-		if child is HBoxContainer:
-			var check = child.get_child(0) if child.get_child_count() > 0 else null
-			if check and check is CheckButton and check.button_pressed:
-				selected_skills.append(check.text)
-	
-	if not selected_skills.is_empty():
-		preview += "[color='#42ffc2']技能:[/color] {0}\n".format([", ".join(selected_skills)])
-	
-	# 显示提示词预览（截取前200字符）
-	if not prompt.is_empty():
-		var preview_prompt = prompt.substr(0, 200)
-		if prompt.length() > 200:
-			preview_prompt += "..."
-		preview += "\n[color='#ffb373']系统提示词预览:[/color]\n{0}".format([preview_prompt])
-	
-	preview_text.text = preview
-
-func _show_error(msg: String) -> void:
-	GoGentSingleton.print_gogent_console(msg, "error")
-
-func _show_success(msg: String) -> void:
-	GoGentSingleton.print_gogent_console(msg, "success")
-
-func _on_export() -> void:
-	"""导出当前 Agent 配置"""
-	if _current_agent_id.is_empty():
-		_show_error("请先选择一个 Agent")
+	if preview == null:
 		return
-	
-	var file_dialog = FileDialog.new()
-	file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	file_dialog.add_filter("*.json", "Agent 配置文件")
-	file_dialog.file_selected.connect(func(path):
-		if export_agent_config(path):
-			_show_success("Agent 配置已导出")
-		else:
-			_show_error("导出失败")
-	)
-	add_child(file_dialog)
-	file_dialog.popup_centered(Vector2i(600, 400))
+	var data := _collect_form() if name_input != null else {}
+	preview.text = "[b]Preview[/b]\nName: %s\nRole: %s\nTemperature: %.2f\nMax tokens: %d\nSkills: %s" % [
+		data.get("name", "<unset>"),
+		data.get("role", "<unset>"),
+		float(data.get("temperature", 0.7)),
+		int(data.get("max_tokens", 8192)),
+		", ".join(data.get("skills", []))
+	]
 
-func _on_import() -> void:
-	"""导入 Agent 配置"""
-	var file_dialog = FileDialog.new()
-	file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	file_dialog.add_filter("*.json", "Agent 配置文件")
-	file_dialog.file_selected.connect(func(path):
-		if import_agent_config(path):
-			_show_success("Agent 配置已导入")
-		else:
-			_show_error("导入失败")
-	)
-	add_child(file_dialog)
-	file_dialog.popup_centered(Vector2i(600, 400))
-
-## 应用预设模板
-func apply_template(template_name: String) -> void:
-	if not AGENT_TEMPLATES.has(template_name):
-		return
-	
-	var template = AGENT_TEMPLATES[template_name]
-	agent_name_input.text = template.name
-	agent_role_input.text = template.role
-	system_prompt_edit.text = template.system_prompt
-	temperature_slider.value = template.temperature
-	temperature_label.text = "{0:.2f}".format([template.temperature])
-	max_tokens_spin.value = template.max_tokens
-	auto_respond_toggle.button_pressed = template.auto_respond
-	
-	# 勾选技能
-	for child in skill_list.get_children():
-		if child is HBoxContainer:
-			var check = child.get_child(0) if child.get_child_count() > 0 else null
-			if check and check is CheckButton:
-				check.button_pressed = check.text in template.skills
-	
+func _apply_template(template: Array) -> void:
+	name_input.text = template[1]
+	role_input.text = template[2]
+	prompt_edit.text = template[3]
 	_update_preview()
-	_show_success("已应用模板: {0}".format([template.name]))
 
-## 导出 Agent 配置
-func export_agent_config(file_path: String) -> bool:
+func _export_agent() -> void:
 	if _current_agent_id.is_empty():
-		return false
-	
-	var singleton = GoGentSingleton.get_instance()
-	if not singleton.agent_manager:
-		return false
-	
-	var agent = singleton.agent_manager.get_agent(_current_agent_id)
-	if agent == null:
-		return false
-	
-	var file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	
-	file.store_string(JSON.stringify(agent.to_dict(), "\t"))
-	file.close()
-	return true
+		GoGentSingleton.print_gogent_console("Select an agent before exporting.", "warning")
+		return
+	var dialog := FileDialog.new()
+	dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	dialog.access = FileDialog.ACCESS_FILESYSTEM
+	dialog.add_filter("*.json", "JSON")
+	dialog.file_selected.connect(func(path: String):
+		var agent = GoGentSingleton.get_instance().agent_manager.get_agent(_current_agent_id)
+		if agent != null:
+			var file := FileAccess.open(path, FileAccess.WRITE)
+			if file != null:
+				file.store_string(JSON.stringify(agent.to_dict(), "\t"))
+				file.close()
+	)
+	add_child(dialog)
+	dialog.popup_centered(Vector2i(640, 420))
 
-## 导入 Agent 配置
-func import_agent_config(file_path: String) -> bool:
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if FileAccess.get_open_error() != OK:
-		return false
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	var json = JSON.parse_string(content)
-	if json == null:
-		return false
-	
-	var singleton = GoGentSingleton.get_instance()
-	if not singleton.agent_manager:
-		return false
-	
-	var agent = GoGentAgentManager.AgentConfig.from_dict(json)
-	singleton.agent_manager.add_agent(agent)
-	_load_agents()
-	_show_success("Agent 配置已导入")
-	return true
+func _import_agent() -> void:
+	var dialog := FileDialog.new()
+	dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	dialog.access = FileDialog.ACCESS_FILESYSTEM
+	dialog.add_filter("*.json", "JSON")
+	dialog.file_selected.connect(func(path: String):
+		var text := FileAccess.get_file_as_string(path)
+		if FileAccess.get_open_error() == OK:
+			var parsed = JSON.parse_string(text)
+			if parsed is Dictionary:
+				GoGentSingleton.get_instance().agent_manager.add_agent(GoGentAgentManager.AgentConfig.from_dict(parsed))
+	)
+	add_child(dialog)
+	dialog.popup_centered(Vector2i(640, 420))

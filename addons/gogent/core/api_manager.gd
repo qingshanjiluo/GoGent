@@ -2,173 +2,146 @@
 class_name GoGentAPIManager
 extends RefCounted
 
-## API 管理器
-## 管理所有 AI API 的调用（OpenAI 兼容接口、Claude、Gemini 等）
-## 支持流式 (SSE) 和非流式请求
-
-# 信号
+signal request_started
 signal request_completed(success: bool, response: String, thinking: String)
 signal stream_chunk(chunk: String, request_id: int)
 signal stream_thinking_chunk(chunk: String, request_id: int)
 signal stream_completed(success: bool, full_response: String, thinking: String, request_id: int)
 
-# 当前 HTTP 请求
-var http_request: HTTPRequest = null
-var is_generating: bool = false
-
-# 流式管理器
-var stream_manager: GoGentStreamManager = null
+var http_request: HTTPRequest
+var stream_manager: GoGentStreamManager
+var is_generating := false
 
 func _init() -> void:
 	stream_manager = GoGentStreamManager.new()
-	_connect_stream_signals()
+	stream_manager.stream_chunk.connect(func(chunk: String, id: int): stream_chunk.emit(chunk, id))
+	stream_manager.stream_thinking_chunk.connect(func(chunk: String, id: int): stream_thinking_chunk.emit(chunk, id))
+	stream_manager.stream_completed.connect(func(text: String, thinking: String, id: int): stream_completed.emit(true, text, thinking, id))
+	stream_manager.stream_error.connect(func(error: String, id: int): stream_completed.emit(false, error, "", id))
 
-func _connect_stream_signals() -> void:
-	if stream_manager:
-		stream_manager.stream_chunk.connect(_on_stream_chunk)
-		stream_manager.stream_thinking_chunk.connect(_on_stream_thinking_chunk)
-		stream_manager.stream_completed.connect(_on_stream_completed)
-		stream_manager.stream_error.connect(_on_stream_error)
-
-## 发送聊天请求（非流式）
 func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> void:
+	var context := _build_request_context(messages, options, false)
+	if context.is_empty():
+		request_completed.emit(false, "No valid model is configured.", "")
+		return
 	var singleton = GoGentSingleton.get_instance()
-	var model_manager = singleton.model_manager
-	if model_manager == null:
-		push_error("模型管理器未初始化")
-		return
-	
-	var supplier = model_manager.get_current_supplier()
-	var model = model_manager.get_current_model()
-	
-	if supplier == null or model == null:
-		push_error("未配置有效的模型")
-		return
-	
-	# 创建 HTTP 请求节点
 	if http_request == null:
 		http_request = HTTPRequest.new()
-		if singleton.main_panel:
+		if singleton.main_panel != null:
 			singleton.main_panel.add_child(http_request)
-	
-	# 准备请求头
-	var headers = [
-		"Accept: application/json",
-		"Authorization: Bearer %s" % supplier.api_key,
-		"Content-Type: application/json"
-	]
-	
-	# 准备请求体
-	var request_data = {
-		"messages": messages,
-		"model": model.model_name,
-		"max_tokens": options.get("max_tokens", model.max_tokens),
-		"temperature": options.get("temperature", 1.0),
-		"stream": false,
-		"top_p": options.get("top_p", 1),
-	}
-	
-	# 工具调用支持
-	if options.get("tools", null) != null and model.supports_tools:
-		request_data["tools"] = options["tools"]
-		request_data["tool_choice"] = options.get("tool_choice", "auto")
-	
-	var request_body = JSON.stringify(request_data)
-	
-	# 构建 URL
-	var url = supplier.base_url
-	if url.ends_with("/"):
-		url = url.substr(0, url.length() - 1)
-	
-	if not url.ends_with("/chat/completions"):
-		if url.ends_with("/v1") or url.ends_with("/v3"):
-			url += "/chat/completions"
 		else:
-			url += "/v1/chat/completions"
-	
-	# 发送请求
-	if not http_request.request_completed.is_connected(_on_request_completed):
-		http_request.request_completed.connect(_on_request_completed)
-	
-	is_generating = true
-	var err = http_request.request(url, headers, HTTPClient.METHOD_POST, request_body)
-	if err != OK:
-		push_error("请求发送失败: " + str(err))
-		is_generating = false
-		request_completed.emit(false, "", "")
-
-## 发送流式聊天请求（SSE 实时响应）
-func send_stream_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> int:
-	if stream_manager == null:
-		push_error("流式管理器未初始化")
-		return -1
-	
-	return stream_manager.send_stream_request(messages, options)
-
-## 处理流式数据块
-func _on_stream_chunk(chunk: String, request_id: int) -> void:
-	stream_chunk.emit(chunk, request_id)
-
-func _on_stream_thinking_chunk(chunk: String, request_id: int) -> void:
-	stream_thinking_chunk.emit(chunk, request_id)
-
-func _on_stream_completed(full_response: String, thinking: String, request_id: int) -> void:
-	stream_completed.emit(true, full_response, thinking, request_id)
-
-func _on_stream_error(error_msg: String, request_id: int) -> void:
-	push_error("流式请求错误: " + error_msg)
-	stream_completed.emit(false, "", "", request_id)
-
-## 处理非流式请求完成
-func _on_request_completed(_result, _response_code, _headers, body: PackedByteArray) -> void:
-	is_generating = false
-	
-	var json = JSON.new()
-	var err = json.parse(body.get_string_from_utf8())
-	if err != OK:
-		push_error("JSON 解析错误: " + json.get_error_message())
-		request_completed.emit(false, "", "")
-		return
-	
-	var data = json.get_data()
-	if data and data.has("choices"):
-		var choices := data["choices"] as Array
-		if choices.size() > 0:
-			var message_data = choices[0].get("message", {})
-			var content = message_data.get("content", "")
-			var think_msg = message_data.get("reasoning_content", "")
-			request_completed.emit(true, content, think_msg)
+			request_completed.emit(false, "GoGent panel is not available for HTTP requests.", "")
 			return
-	
-	# 错误处理
-	if data.has("error"):
-		var error_info = data["error"]
-		var error_msg = "API 错误"
-		if error_info is Dictionary:
-			error_msg = error_info.get("message", error_msg)
-		push_error(error_msg)
-	
-	request_completed.emit(false, "", "")
-
-## 取消请求
-func cancel_request() -> void:
-	if http_request and is_generating:
-		http_request.cancel_request()
+		http_request.request_completed.connect(_on_request_completed)
+	_apply_proxy(http_request)
+	is_generating = true
+	request_started.emit()
+	var err := http_request.request(context["url"], context["headers"], HTTPClient.METHOD_POST, context["body"])
+	if err != OK:
 		is_generating = false
-	
-	# 取消所有流式请求
-	if stream_manager:
+		request_completed.emit(false, "HTTP request failed to start: %s" % err, "")
+
+func send_stream_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> int:
+	var context := _build_request_context(messages, options, true)
+	if context.is_empty():
+		return -1
+	return stream_manager.send_stream_request(context)
+
+func cancel_request() -> void:
+	if http_request != null and is_generating:
+		http_request.cancel_request()
+	is_generating = false
+	if stream_manager != null:
 		stream_manager.cancel_all_streams()
 
-## 构建消息
+func _build_request_context(messages: Array[Dictionary], options: Dictionary, stream: bool) -> Dictionary:
+	var singleton = GoGentSingleton.get_instance()
+	var manager = singleton.model_manager
+	if manager == null:
+		return {}
+	var supplier = manager.get_current_supplier()
+	var model = manager.get_current_model()
+	if supplier == null or model == null:
+		return {}
+	var selected_model := str(options.get("model", model.model_name))
+	var body_data := {
+		"model": selected_model,
+		"messages": messages,
+		"temperature": float(options.get("temperature", singleton.config_manager.get_setting("default_temperature", 0.7) if singleton.config_manager else 0.7)),
+		"max_tokens": int(options.get("max_tokens", model.max_tokens)),
+		"stream": stream
+	}
+	if options.has("top_p"):
+		body_data["top_p"] = options["top_p"]
+	if options.has("tools") and model.supports_tools:
+		body_data["tools"] = options["tools"]
+		body_data["tool_choice"] = options.get("tool_choice", "auto")
+	if model.supports_thinking or options.get("supports_thinking", false):
+		body_data["include_reasoning"] = true
+	var headers := PackedStringArray([
+		"Accept: text/event-stream" if stream else "Accept: application/json",
+		"Content-Type: application/json"
+	])
+	if not supplier.api_key.strip_edges().is_empty():
+		headers.append("Authorization: Bearer %s" % supplier.api_key.strip_edges())
+	return {
+		"url": _chat_url(supplier.base_url),
+		"headers": headers,
+		"body": JSON.stringify(body_data),
+		"supplier": supplier.to_dict(),
+		"proxy": _proxy_settings()
+	}
+
+func _chat_url(base_url: String) -> String:
+	var url := base_url.strip_edges()
+	if url.is_empty():
+		url = "https://api.openai.com"
+	if url.ends_with("/"):
+		url = url.substr(0, url.length() - 1)
+	if url.ends_with("/chat/completions"):
+		return url
+	if url.ends_with("/v1") or url.ends_with("/v3"):
+		return url + "/chat/completions"
+	return url + "/v1/chat/completions"
+
+func _proxy_settings() -> Dictionary:
+	var cfg = GoGentSingleton.get_instance().config_manager
+	if cfg == null:
+		return {}
+	var host := str(cfg.get_setting("http_proxy_host", "")).strip_edges()
+	var port := int(cfg.get_setting("http_proxy_port", 0))
+	if host.is_empty() or port <= 0:
+		return {}
+	return {"host": host, "port": port}
+
+func _apply_proxy(request: HTTPRequest) -> void:
+	var proxy := _proxy_settings()
+	if proxy.is_empty():
+		return
+	request.set_http_proxy(proxy["host"], proxy["port"])
+	request.set_https_proxy(proxy["host"], proxy["port"])
+
+func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	is_generating = false
+	var text := body.get_string_from_utf8()
+	if result != HTTPRequest.RESULT_SUCCESS:
+		request_completed.emit(false, "HTTP request failed: result=%s code=%s body=%s" % [result, response_code, text], "")
+		return
+	var parsed = JSON.parse_string(text)
+	if not (parsed is Dictionary):
+		request_completed.emit(false, "Invalid JSON response: %s" % text.left(500), "")
+		return
+	if parsed.has("error"):
+		var error = parsed["error"]
+		var message := str(error.get("message", error)) if error is Dictionary else str(error)
+		request_completed.emit(false, message, "")
+		return
+	var choices: Array = parsed.get("choices", [])
+	if choices.is_empty():
+		request_completed.emit(false, "Response did not contain choices.", "")
+		return
+	var message: Dictionary = choices[0].get("message", {})
+	request_completed.emit(true, str(message.get("content", "")), str(message.get("reasoning_content", "")))
+
 static func build_message(role: String, content: String) -> Dictionary:
 	return {"role": role, "content": content}
-
-static func build_system_message(content: String) -> Dictionary:
-	return build_message("system", content)
-
-static func build_user_message(content: String) -> Dictionary:
-	return build_message("user", content)
-
-static func build_assistant_message(content: String) -> Dictionary:
-	return build_message("assistant", content)

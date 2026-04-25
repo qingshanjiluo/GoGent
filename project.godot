@@ -1,0 +1,13 @@
+; Engine configuration file.
+; This file allows GoGent to be opened and tested directly as a Godot project.
+
+config_version=5
+
+[application]
+
+config/name="GoGent"
+config/features=PackedStringArray("4.2")
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gogent/plugin.cfg")

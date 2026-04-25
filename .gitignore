@@ -1,40 +1,39 @@
-# Godot 项目文件
+# Godot generated files
 .godot/
 *.import
 *.uid
 import/
 *.translation
 
-# 插件配置（保留插件代码，忽略运行时生成的文件）
+# Local runtime configuration and secrets
 addons/gogent/config/*.json
 addons/gogent/config/*.cfg
+addons/gogent/config/trained_models/
 
-# 训练模型文件
+# Training/model artifacts
 models/
 *.h5
 *.pth
 *.pt
 
-# 操作系统文件
+# Local reference projects
+参考文件/
+
+# OS and editor files
 Thumbs.db
 .DS_Store
 Desktop.ini
-
-# IDE 文件
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# 日志和临时文件
-
-# 参考项目（不上传）
-参考文件/
+# Logs and temporary files
 *.log
 *.tmp
 *.temp
 
-# Godot 导出
+# Godot exports
 export/
 exports/

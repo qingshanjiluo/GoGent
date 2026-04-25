@@ -2,29 +2,26 @@
 class_name GoGentAgentManager
 extends RefCounted
 
-## Agent 管理器
-## 管理多个 AI Agent 的创建、配置和协作
-## 参考 AlphaAgent 的 Agent 系统和 Microverse 的多角色 AI
+const AGENTS_FILE := "res://addons/gogent/config/agents.json"
 
-# Agent 配置
 class AgentConfig:
-	var id: String = ""
-	var name: String = ""
-	var role: String = ""        # 角色描述
-	var system_prompt: String = ""
-	var model_id: String = ""
-	var supplier_id: String = ""
-	var temperature: float = 1.0
-	var max_tokens: int = 8192
-	var enabled: bool = true
-	var auto_respond: bool = false  # 是否自动响应
-	var skills: Array[String] = []  # 技能列表
-	
-	func _init(p_name: String = "", p_role: String = ""):
-		id = str(Time.get_unix_time_from_system()) + "_" + str(randi())
+	var id := ""
+	var name := ""
+	var role := ""
+	var system_prompt := ""
+	var model_id := ""
+	var supplier_id := ""
+	var temperature := 0.7
+	var max_tokens := 8192
+	var enabled := true
+	var auto_respond := false
+	var skills: Array[String] = []
+
+	func _init(p_name: String = "", p_role: String = "") -> void:
+		id = "agent_%d_%d" % [Time.get_unix_time_from_system(), randi()]
 		name = p_name
 		role = p_role
-	
+
 	func to_dict() -> Dictionary:
 		return {
 			"id": id,
@@ -39,101 +36,120 @@ class AgentConfig:
 			"auto_respond": auto_respond,
 			"skills": skills
 		}
-	
-	static func from_dict(data: Dictionary) -> AgentConfig:
-		var config = AgentConfig.new()
-		config.id = data.get("id", config.id)
-		config.name = data.get("name", "")
-		config.role = data.get("role", "")
-		config.system_prompt = data.get("system_prompt", "")
-		config.model_id = data.get("model_id", "")
-		config.supplier_id = data.get("supplier_id", "")
-		config.temperature = data.get("temperature", 1.0)
-		config.max_tokens = data.get("max_tokens", 8192)
-		config.enabled = data.get("enabled", true)
-		config.auto_respond = data.get("auto_respond", false)
-		config.skills = data.get("skills", [])
-		return config
 
-# Agent 会话
+	static func from_dict(data: Dictionary) -> AgentConfig:
+		var agent := AgentConfig.new(data.get("name", ""), data.get("role", ""))
+		agent.id = data.get("id", agent.id)
+		agent.system_prompt = data.get("system_prompt", "")
+		agent.model_id = data.get("model_id", "")
+		agent.supplier_id = data.get("supplier_id", "")
+		agent.temperature = float(data.get("temperature", 0.7))
+		agent.max_tokens = int(data.get("max_tokens", 8192))
+		agent.enabled = data.get("enabled", true)
+		agent.auto_respond = data.get("auto_respond", false)
+		agent.skills.clear()
+		for skill in data.get("skills", []):
+			agent.skills.append(str(skill))
+		return agent
+
 class AgentSession:
-	var agent_id: String = ""
+	var agent_id := ""
 	var messages: Array[Dictionary] = []
-	var context: Dictionary = {}
-	var created_at: int = 0
-	var updated_at: int = 0
-	
-	func _init(p_agent_id: String):
+	var created_at := 0
+	var updated_at := 0
+
+	func _init(p_agent_id: String = "") -> void:
 		agent_id = p_agent_id
 		created_at = Time.get_unix_time_from_system()
 		updated_at = created_at
 
-const AGENTS_FILE: String = "res://addons/gogent/config/agents.json"
-
 var agents: Array[AgentConfig] = []
-var sessions: Dictionary = {}  # agent_id -> AgentSession
-var collaboration_enabled: bool = true
+var sessions: Dictionary = {}
+var collaboration_enabled := true
 
 func _init() -> void:
+	_ensure_dir()
 	load_agents()
 	if agents.is_empty():
 		_add_default_agents()
 
+func _ensure_dir() -> void:
+	var dir := AGENTS_FILE.get_base_dir()
+	if not DirAccess.dir_exists_absolute(dir):
+		DirAccess.make_dir_recursive_absolute(dir)
+
 func _add_default_agents() -> void:
-	# 代码助手 Agent
-	var coder = AgentConfig.new("代码助手", "Godot 开发专家")
-	coder.system_prompt = "你是一个 Godot 4.x 开发专家，精通 GDScript 和 Godot 引擎 API。帮助用户编写、优化和调试代码。"
-	coder.auto_respond = false
-	agents.append(coder)
-	
-	# 策划助手 Agent
-	var designer = AgentConfig.new("策划助手", "游戏策划专家")
-	designer.system_prompt = "你是一个游戏策划专家，擅长游戏设计、数值平衡、关卡设计。帮助用户规划游戏功能和设计文档。"
-	designer.auto_respond = false
-	agents.append(designer)
-	
-	# 测试助手 Agent
-	var tester = AgentConfig.new("测试助手", "QA 测试专家")
-	tester.system_prompt = "你是一个 QA 测试专家，擅长游戏测试、性能分析、Bug 追踪。帮助用户发现和修复问题。"
-	tester.auto_respond = false
-	agents.append(tester)
-	
-	# AI 训练师 Agent
-	var trainer = AgentConfig.new("AI 训练师", "机器学习专家")
-	trainer.system_prompt = "你是一个机器学习专家，擅长强化学习、神经网络训练。帮助用户训练游戏 AI。"
-	trainer.auto_respond = false
-	agents.append(trainer)
-	
+	agents.clear()
+	_add_default_agent("Code Assistant", "Godot development expert", "You are a senior Godot 4 engineer. Help write, debug, review, and improve GDScript and editor workflows.", ["code_review"])
+	_add_default_agent("Game Designer", "Gameplay and systems designer", "You are a game designer. Help design mechanics, progression, economy, levels, and player experience for Godot games.", ["game_design"])
+	_add_default_agent("QA Tester", "Game QA engineer", "You are a QA engineer. Create test plans, edge cases, bug reports, and automated Godot testing ideas.", ["game_testing"])
+	_add_default_agent("AI Trainer", "Reinforcement learning advisor", "You are an AI training specialist. Help design RL states, actions, rewards, evaluation, and training strategy.", ["ai_training"])
 	save_agents()
-	GoGentPlugin.print_gogent("已创建 {0} 个默认 Agent".format([agents.size()]), "#42ffc2")
+
+func _add_default_agent(name: String, role: String, prompt: String, default_skills: Array[String]) -> void:
+	var agent := AgentConfig.new(name, role)
+	agent.system_prompt = prompt
+	agent.skills = default_skills
+	agents.append(agent)
 
 func load_agents() -> void:
-	var file_content = FileAccess.get_file_as_string(AGENTS_FILE)
+	if not FileAccess.file_exists(AGENTS_FILE):
+		return
+	var text := FileAccess.get_file_as_string(AGENTS_FILE)
 	if FileAccess.get_open_error() != OK:
 		return
-	
-	var json = JSON.parse_string(file_content)
-	if json == null:
+	var parsed = JSON.parse_string(text)
+	if not (parsed is Dictionary):
 		return
-	
-	var agents_data = json.get("agents", [])
 	agents.clear()
-	for data in agents_data:
-		agents.append(AgentConfig.from_dict(data))
+	for item in parsed.get("agents", []):
+		if item is Dictionary:
+			agents.append(AgentConfig.from_dict(item))
 
-func save_agents() -> void:
-	var data = {
-		"agents": agents.map(func(a): return a.to_dict())
-	}
-	
-	var file = FileAccess.open(AGENTS_FILE, FileAccess.WRITE)
-	if file:
-		file.store_string(JSON.stringify(data, "\t"))
-		file.close()
+func save_agents() -> bool:
+	_ensure_dir()
+	var data := {"agents": []}
+	for agent in agents:
+		data["agents"].append(agent.to_dict())
+	var file := FileAccess.open(AGENTS_FILE, FileAccess.WRITE)
+	if file == null:
+		return false
+	file.store_string(JSON.stringify(data, "\t"))
+	file.close()
+	return true
 
-func add_agent(config: AgentConfig) -> void:
-	agents.append(config)
+func add_agent(agent: AgentConfig) -> void:
+	agents.append(agent)
 	save_agents()
+	GoGentSingleton.get_instance().agents_changed.emit()
+
+func update_agent(agent_id: String, values: Dictionary) -> bool:
+	var agent := get_agent(agent_id)
+	if agent == null:
+		return false
+	for key in values.keys():
+		match key:
+			"name":
+				agent.name = values[key]
+			"role":
+				agent.role = values[key]
+			"system_prompt":
+				agent.system_prompt = values[key]
+			"temperature":
+				agent.temperature = float(values[key])
+			"max_tokens":
+				agent.max_tokens = int(values[key])
+			"enabled":
+				agent.enabled = values[key]
+			"auto_respond":
+				agent.auto_respond = values[key]
+			"skills":
+				agent.skills.clear()
+				for skill in values[key]:
+					agent.skills.append(str(skill))
+	save_agents()
+	GoGentSingleton.get_instance().agents_changed.emit()
+	return true
 
 func remove_agent(agent_id: String) -> void:
 	for i in range(agents.size()):
@@ -142,6 +158,7 @@ func remove_agent(agent_id: String) -> void:
 			sessions.erase(agent_id)
 			break
 	save_agents()
+	GoGentSingleton.get_instance().agents_changed.emit()
 
 func get_agent(agent_id: String) -> AgentConfig:
 	for agent in agents:
@@ -155,40 +172,36 @@ func get_or_create_session(agent_id: String) -> AgentSession:
 	return sessions[agent_id]
 
 func add_message_to_session(agent_id: String, role: String, content: String) -> void:
-	var session = get_or_create_session(agent_id)
+	var session: AgentSession = get_or_create_session(agent_id)
 	session.messages.append({"role": role, "content": content})
 	session.updated_at = Time.get_unix_time_from_system()
-	
-	# 限制消息数量
-	var max_history = 100
-	if session.messages.size() > max_history:
-		session.messages = session.messages.slice(-max_history)
+	while session.messages.size() > 100:
+		session.messages.pop_front()
 
-## Agent 协作：让多个 Agent 共同讨论一个问题
+func build_messages_for_agent(agent: AgentConfig, user_text: String) -> Array[Dictionary]:
+	var session: AgentSession = get_or_create_session(agent.id)
+	var result: Array[Dictionary] = []
+	if not agent.system_prompt.is_empty():
+		result.append({"role": "system", "content": agent.system_prompt})
+	var start := max(0, session.messages.size() - 10)
+	for i in range(start, session.messages.size()):
+		result.append(session.messages[i])
+	result.append({"role": "user", "content": user_text})
+	return result
+
 func collaborate(problem: String, agent_ids: Array[String]) -> Array[Dictionary]:
-	var results = []
-	
+	var result: Array[Dictionary] = []
 	for agent_id in agent_ids:
-		var agent = get_agent(agent_id)
+		var agent := get_agent(agent_id)
 		if agent == null or not agent.enabled:
 			continue
-		
-		var session = get_or_create_session(agent_id)
-		var messages = []
-		
-		# 系统提示
-		messages.append({"role": "system", "content": agent.system_prompt})
-		
-		# 历史消息
-		messages.append_array(session.messages.slice(-10))
-		
-		# 当前问题
-		messages.append({"role": "user", "content": problem})
-		
-		results.append({
-			"agent_id": agent_id,
+		result.append({
+			"agent_id": agent.id,
 			"agent_name": agent.name,
-			"messages": messages
+			"messages": build_messages_for_agent(agent, problem),
+			"options": {
+				"temperature": agent.temperature,
+				"max_tokens": agent.max_tokens
+			}
 		})
-	
-	return results
+	return result

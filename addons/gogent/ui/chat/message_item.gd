@@ -2,50 +2,70 @@
 class_name GoGentMessageItem
 extends MarginContainer
 
-## 消息项组件
-## 显示用户或 AI 的消息
-
-@onready var user_container: PanelContainer = %UserContainer
-@onready var user_content: RichTextLabel = %UserContent
-@onready var assistant_container: VBoxContainer = %AssistantContainer
-@onready var assistant_content: RichTextLabel = %AssistantContent
-@onready var thinking_container: VBoxContainer = %ThinkingContainer
-@onready var thinking_content: RichTextLabel = %ThinkingContent
-
-enum MessageType {
-	USER,
-	ASSISTANT,
-	SYSTEM
-}
-
-var message_type: MessageType = MessageType.USER
+var _user_panel: PanelContainer
+var _assistant_box: VBoxContainer
+var _user_content: RichTextLabel
+var _assistant_content: RichTextLabel
+var _thinking_content: RichTextLabel
 
 func _ready() -> void:
+	if get_child_count() == 0:
+		_build_ui()
 	hide_all()
+
+func _build_ui() -> void:
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var root := VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_child(root)
+
+	_user_panel = PanelContainer.new()
+	_user_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.add_child(_user_panel)
+	_user_content = _make_text()
+	_user_panel.add_child(_user_content)
+
+	_assistant_box = VBoxContainer.new()
+	_assistant_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.add_child(_assistant_box)
+	_thinking_content = _make_text()
+	_thinking_content.add_theme_color_override("default_color", Color(0.68, 0.72, 0.78))
+	_assistant_box.add_child(_thinking_content)
+	_assistant_content = _make_text()
+	_assistant_box.add_child(_assistant_content)
+
+func _make_text() -> RichTextLabel:
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.fit_content = true
+	label.scroll_active = false
+	label.selection_enabled = true
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return label
 
 func hide_all() -> void:
-	user_container.hide()
-	assistant_container.hide()
-	thinking_container.hide()
+	if _user_panel:
+		_user_panel.visible = false
+	if _assistant_box:
+		_assistant_box.visible = false
+	if _thinking_content:
+		_thinking_content.visible = false
 
 func set_user_message(text: String) -> void:
-	message_type = MessageType.USER
 	hide_all()
-	user_container.show()
-	user_content.text = text
+	_user_panel.visible = true
+	_user_content.text = "[b]You[/b]\n%s" % _escape(text)
 
 func set_assistant_message(text: String, thinking: String = "") -> void:
-	message_type = MessageType.ASSISTANT
 	hide_all()
-	assistant_container.show()
-	assistant_content.text = text
-	
-	if not thinking.is_empty():
-		thinking_container.show()
-		thinking_content.text = thinking
+	_assistant_box.visible = true
+	_assistant_content.text = "[b]GoGent[/b]\n%s" % text
+	if not thinking.strip_edges().is_empty():
+		_thinking_content.visible = true
+		_thinking_content.text = "[i]Thinking[/i]\n%s" % _escape(thinking)
 
 func set_system_message(text: String) -> void:
-	message_type = MessageType.SYSTEM
-	hide_all()
-	assistant_container.show()
-	assistant_content.text = "[color='#ffeda1']{0}[/color]".format([text])
+	set_assistant_message("[color=#ffeda1]%s[/color]" % _escape(text))
+
+func _escape(text: String) -> String:
+	return text.replace("[", "\\[").replace("]", "\\]")
