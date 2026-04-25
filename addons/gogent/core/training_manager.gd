@@ -6,6 +6,7 @@ signal training_started(config: Dictionary)
 signal training_episode_completed(episode: int, reward: float, epsilon: float)
 signal training_completed(stats: Dictionary)
 signal training_error(error_msg: String)
+signal human_feedback_recorded(action: int, reward: float, note: String)
 
 enum TrainingState { IDLE, RUNNING, PAUSED, COMPLETED, ERROR }
 
@@ -87,6 +88,7 @@ var config := TrainingConfig.new()
 var stats := TrainingStats.new()
 var replay_buffer := ReplayBuffer.new()
 var visualizer := GoGentTrainingVisualizer.new()
+var human_feedback: Array[Dictionary] = []
 var _q_table: Dictionary = {}
 var _run_token := 0
 
@@ -102,6 +104,7 @@ func start_training(custom_config = null) -> void:
 	config.exploration_rate = clamp(config.exploration_rate, config.min_exploration_rate, 1.0)
 	stats.reset(config.exploration_rate)
 	replay_buffer = ReplayBuffer.new(config.memory_size)
+	human_feedback.clear()
 	_q_table.clear()
 	visualizer.clear_all()
 	training_started.emit(config.to_dict())
@@ -152,7 +155,9 @@ func get_stats_dict() -> Dictionary:
 		"max_reward": stats.max_reward,
 		"min_reward": stats.min_reward,
 		"epsilon": stats.epsilon,
-		"elapsed_time": stats.elapsed_time
+		"elapsed_time": stats.elapsed_time,
+		"human_feedback_count": human_feedback.size(),
+		"replay_buffer_size": replay_buffer.size()
 	}
 
 func get_action(state_vector: Array) -> int:
@@ -162,6 +167,27 @@ func get_action(state_vector: Array) -> int:
 
 func add_experience(state_vector: Array, action: int, reward: float, next_state: Array, done: bool) -> void:
 	replay_buffer.push({"state": state_vector, "action": action, "reward": reward, "next_state": next_state, "done": done})
+
+func record_human_feedback(state_vector: Array, action: int, reward: float, next_state: Array = [], done: bool = false, note: String = "") -> Dictionary:
+	if next_state.is_empty():
+		next_state = state_vector.duplicate()
+	var feedback := {
+		"state": state_vector,
+		"action": action,
+		"reward": reward,
+		"next_state": next_state,
+		"done": done,
+		"note": note,
+		"created_at": Time.get_unix_time_from_system()
+	}
+	human_feedback.append(feedback)
+	add_experience(state_vector, action, reward, next_state, done)
+	var visual_episode := max(1, stats.episode + human_feedback.size())
+	stats.max_reward = max(stats.max_reward, reward)
+	stats.min_reward = min(stats.min_reward, reward)
+	visualizer.record_reward(visual_episode, reward, stats.avg_reward, stats.max_reward)
+	human_feedback_recorded.emit(action, reward, note)
+	return feedback
 
 func _apply_config(values: Dictionary) -> void:
 	for key in values.keys():

@@ -33,6 +33,8 @@ func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) ->
 			request_completed.emit(false, "GoGent panel is not available for HTTP requests.", "")
 			return
 		http_request.request_completed.connect(_on_request_completed)
+	if singleton.config_manager != null:
+		http_request.timeout = max(1, int(singleton.config_manager.get_setting("request_timeout", 120)))
 	_apply_proxy(http_request)
 	is_generating = true
 	request_started.emit()
@@ -67,13 +69,18 @@ func _build_request_context(messages: Array[Dictionary], options: Dictionary, st
 		return {}
 	var selected_model := str(options.get("model", model.model_name))
 	var provider := str(supplier.provider)
-	var body_data := _build_provider_body(provider, messages, selected_model, int(options.get("max_tokens", model.max_tokens)), float(options.get("temperature", singleton.config_manager.get_setting("default_temperature", 0.7) if singleton.config_manager else 0.7)), stream)
-	if options.has("top_p"):
-		body_data["top_p"] = options["top_p"]
-	if provider != "anthropic" and options.has("tools") and model.supports_tools:
+	var request_options := _merge_request_options(options, model.max_tokens)
+	var body_data := _build_provider_body(provider, messages, selected_model, int(request_options["max_tokens"]), float(request_options["temperature"]), stream)
+	body_data["top_p"] = float(request_options["top_p"])
+	if provider != "anthropic":
+		body_data["presence_penalty"] = float(request_options["presence_penalty"])
+		body_data["frequency_penalty"] = float(request_options["frequency_penalty"])
+		if bool(request_options["json_mode"]):
+			body_data["response_format"] = {"type": "json_object"}
+	if provider != "anthropic" and bool(request_options["tools_enabled"]) and options.has("tools") and model.supports_tools:
 		body_data["tools"] = options["tools"]
 		body_data["tool_choice"] = options.get("tool_choice", "auto")
-	if provider != "anthropic" and (model.supports_thinking or options.get("supports_thinking", false)):
+	if provider != "anthropic" and supplier.id == "openrouter" and bool(request_options["reasoning_enabled"]) and (model.supports_thinking or options.get("supports_thinking", false)):
 		body_data["include_reasoning"] = true
 	var headers := PackedStringArray([
 		"Accept: text/event-stream" if stream else "Accept: application/json",
@@ -91,7 +98,27 @@ func _build_request_context(messages: Array[Dictionary], options: Dictionary, st
 		"body": JSON.stringify(body_data),
 		"supplier": supplier.to_dict(),
 		"provider": provider,
+		"model": model.to_dict(),
+		"request_options": request_options,
 		"proxy": _proxy_settings()
+	}
+
+func _merge_request_options(options: Dictionary, model_max_tokens: int) -> Dictionary:
+	var cfg = GoGentSingleton.get_instance().config_manager
+	var temperature := float(options.get("temperature", cfg.get_setting("default_temperature", 0.7) if cfg else 0.7))
+	var top_p := float(options.get("top_p", cfg.get_setting("default_top_p", 1.0) if cfg else 1.0))
+	var max_tokens := int(options.get("max_tokens", cfg.get_setting("default_max_tokens", model_max_tokens) if cfg else model_max_tokens))
+	var presence_penalty := float(options.get("presence_penalty", cfg.get_setting("default_presence_penalty", 0.0) if cfg else 0.0))
+	var frequency_penalty := float(options.get("frequency_penalty", cfg.get_setting("default_frequency_penalty", 0.0) if cfg else 0.0))
+	return {
+		"temperature": clamp(temperature, 0.0, 2.0),
+		"top_p": clamp(top_p, 0.0, 1.0),
+		"max_tokens": clamp(max_tokens, 1, max(1, model_max_tokens)),
+		"presence_penalty": clamp(presence_penalty, -2.0, 2.0),
+		"frequency_penalty": clamp(frequency_penalty, -2.0, 2.0),
+		"reasoning_enabled": bool(options.get("reasoning_enabled", cfg.get_setting("default_reasoning_enabled", true) if cfg else true)),
+		"tools_enabled": bool(options.get("tools_enabled", cfg.get_setting("default_tools_enabled", true) if cfg else true)),
+		"json_mode": bool(options.get("json_mode", cfg.get_setting("default_json_mode", false) if cfg else false))
 	}
 
 func _build_provider_body(provider: String, messages: Array[Dictionary], model_name: String, max_tokens: int, temperature: float, stream: bool) -> Dictionary:

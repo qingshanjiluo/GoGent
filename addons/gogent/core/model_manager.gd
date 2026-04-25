@@ -144,6 +144,16 @@ func _add_model(supplier: SupplierInfo, model_name: String, display_name: String
 
 func _ensure_builtin_suppliers() -> void:
 	var changed := false
+	if get_supplier("deepseek") == null:
+		var deepseek := _make_supplier("deepseek", "DeepSeek", "https://api.deepseek.com", "deepseek")
+		_add_model(deepseek, "deepseek-chat", "DeepSeek Chat", 65536, false, true, false)
+		_add_model(deepseek, "deepseek-reasoner", "DeepSeek Reasoner", 65536, true, true, false)
+		changed = true
+	if get_supplier("openai") == null:
+		var openai := _make_supplier("openai", "OpenAI", "https://api.openai.com", "openai")
+		_add_model(openai, "gpt-4o", "GPT-4o", 16384, false, true, true)
+		_add_model(openai, "gpt-4o-mini", "GPT-4o Mini", 16384, false, true, true)
+		changed = true
 	if get_supplier("anthropic") == null:
 		var anthropic := _make_supplier("anthropic", "Anthropic Claude", "https://api.anthropic.com", "anthropic")
 		_add_model(anthropic, "claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", 8192, false, true, true)
@@ -229,6 +239,75 @@ func set_current_credentials(api_key: String, base_url: String = "") -> void:
 	if not base_url.strip_edges().is_empty():
 		supplier.base_url = base_url.strip_edges()
 	save_models()
+
+func update_current_supplier(values: Dictionary) -> bool:
+	var supplier := get_current_supplier()
+	if supplier == null:
+		return false
+	for key in values.keys():
+		match key:
+			"name":
+				supplier.name = str(values[key]).strip_edges()
+			"base_url":
+				supplier.base_url = str(values[key]).strip_edges()
+			"api_key":
+				supplier.api_key = str(values[key])
+			"provider":
+				supplier.provider = str(values[key]).strip_edges()
+	save_models()
+	GoGentSingleton.get_instance().models_changed.emit()
+	return true
+
+func update_current_model(values: Dictionary) -> bool:
+	var model := get_current_model()
+	if model == null:
+		return false
+	for key in values.keys():
+		match key:
+			"name":
+				model.name = str(values[key]).strip_edges()
+			"model_name":
+				model.model_name = str(values[key]).strip_edges()
+			"max_tokens":
+				model.max_tokens = max(1, int(values[key]))
+			"supports_thinking":
+				model.supports_thinking = bool(values[key])
+			"supports_tools":
+				model.supports_tools = bool(values[key])
+			"supports_vision":
+				model.supports_vision = bool(values[key])
+			"active":
+				model.active = bool(values[key])
+	save_models()
+	GoGentSingleton.get_instance().models_changed.emit()
+	return true
+
+func add_model_to_current(model_name: String, display_name: String = "", max_tokens: int = 8192, supports_thinking: bool = false, supports_tools: bool = true, supports_vision: bool = false) -> bool:
+	var supplier := get_current_supplier()
+	if supplier == null:
+		return false
+	var display := display_name.strip_edges()
+	if display.is_empty():
+		display = model_name
+	var model := ModelInfo.new("%s_%s" % [supplier.id, model_name.replace("/", "_").replace(".", "_").replace(":", "_")], display, model_name)
+	model.max_tokens = max(1, max_tokens)
+	model.supports_thinking = supports_thinking
+	model.supports_tools = supports_tools
+	model.supports_vision = supports_vision
+	return add_model(supplier.id, model)
+
+func add_openai_compatible_supplier(id: String, name: String, base_url: String, api_key: String, model_name: String) -> bool:
+	if id.strip_edges().is_empty() or get_supplier(id) != null:
+		return false
+	var supplier := SupplierInfo.new(id.strip_edges(), name.strip_edges(), base_url.strip_edges(), "openai_compatible")
+	supplier.api_key = api_key
+	suppliers.append(supplier)
+	_add_model(supplier, model_name.strip_edges(), model_name.strip_edges(), 8192, false, true, false)
+	current_supplier_id = supplier.id
+	current_model_id = supplier.models[0].id
+	save_models()
+	GoGentSingleton.get_instance().models_changed.emit()
+	return true
 
 func add_supplier(supplier: SupplierInfo) -> void:
 	suppliers.append(supplier)

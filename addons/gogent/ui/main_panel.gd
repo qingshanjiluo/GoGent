@@ -17,14 +17,47 @@ var _model_button: OptionButton
 var _agent_button: OptionButton
 var _console_output: RichTextLabel
 var _console_input: LineEdit
+var _scene_output: RichTextLabel
+var _scene_path: LineEdit
+var _scene_root_class: LineEdit
+var _scene_node_class: LineEdit
+var _scene_parent_path: LineEdit
+var _scene_node_name: LineEdit
+var _scene_property_node_path: LineEdit
+var _scene_property_name: LineEdit
+var _scene_property_value: LineEdit
+var _scene_script_node_path: LineEdit
+var _scene_script_path: LineEdit
 var _training_status: Label
 var _training_progress: ProgressBar
 var _training_episode: Label
 var _training_reward: Label
 var _training_epsilon: Label
+var _feedback_state: LineEdit
+var _feedback_next_state: LineEdit
+var _feedback_action: SpinBox
+var _feedback_reward: SpinBox
+var _feedback_done: CheckBox
+var _feedback_note: LineEdit
 var _chart_holder: PanelContainer
 var _settings_api_key: LineEdit
 var _settings_api_url: LineEdit
+var _settings_provider_type: OptionButton
+var _settings_model_name: LineEdit
+var _settings_model_display_name: LineEdit
+var _settings_model_max_tokens: SpinBox
+var _settings_model_thinking: CheckButton
+var _settings_model_tools: CheckButton
+var _settings_model_vision: CheckButton
+var _settings_temperature: SpinBox
+var _settings_top_p: SpinBox
+var _settings_max_tokens: SpinBox
+var _settings_presence_penalty: SpinBox
+var _settings_frequency_penalty: SpinBox
+var _settings_reasoning_enabled: CheckButton
+var _settings_tools_enabled: CheckButton
+var _settings_json_mode: CheckButton
+var _settings_timeout: SpinBox
 var _settings_proxy_host: LineEdit
 var _settings_proxy_port: SpinBox
 var _settings_claude_command: LineEdit
@@ -72,12 +105,14 @@ func _build_ui() -> void:
 	root.add_child(tabs)
 	_add_tab(tabs, "Chat")
 	_add_tab(tabs, "Console")
+	_add_tab(tabs, "Scene")
 	_add_tab(tabs, "Training")
 	_add_tab(tabs, "Agents")
 	_add_tab(tabs, "Settings")
 
 	_containers["Chat"] = _build_chat(root)
 	_containers["Console"] = _build_console(root)
+	_containers["Scene"] = _build_scene(root)
 	_containers["Training"] = _build_training(root)
 	_containers["Agents"] = _build_agents(root)
 	_containers["Settings"] = _build_settings(root)
@@ -191,6 +226,66 @@ func _build_console(parent: Control) -> Control:
 	row.add_child(clear_button)
 	return box
 
+func _build_scene(parent: Control) -> Control:
+	var box := VBoxContainer.new()
+	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	parent.add_child(box)
+	_scene_output = RichTextLabel.new()
+	_scene_output.bbcode_enabled = true
+	_scene_output.scroll_active = true
+	_scene_output.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scene_output.text = "[color=#42ffc2]场景工具已就绪。[/color]\n"
+	box.add_child(_scene_output)
+
+	var scene_row := HBoxContainer.new()
+	box.add_child(scene_row)
+	_scene_path = _line(scene_row, "场景路径")
+	_scene_path.placeholder_text = "res://scenes/demo.tscn"
+	_scene_root_class = _line(scene_row, "根节点")
+	_scene_root_class.text = "Node2D"
+	var create_button := Button.new()
+	create_button.text = "创建场景"
+	create_button.pressed.connect(_scene_create_scene)
+	scene_row.add_child(create_button)
+	var list_button := Button.new()
+	list_button.text = "列出节点"
+	list_button.pressed.connect(_scene_list_nodes)
+	scene_row.add_child(list_button)
+
+	var add_row := HBoxContainer.new()
+	box.add_child(add_row)
+	_scene_node_class = _line(add_row, "节点类型")
+	_scene_node_class.text = "Node2D"
+	_scene_parent_path = _line(add_row, "父路径")
+	_scene_parent_path.placeholder_text = "."
+	_scene_node_name = _line(add_row, "节点名")
+	var add_button := Button.new()
+	add_button.text = "添加节点"
+	add_button.pressed.connect(_scene_add_node)
+	add_row.add_child(add_button)
+
+	var prop_row := HBoxContainer.new()
+	box.add_child(prop_row)
+	_scene_property_node_path = _line(prop_row, "节点路径")
+	_scene_property_name = _line(prop_row, "属性")
+	_scene_property_value = _line(prop_row, "值")
+	_scene_property_value.placeholder_text = "\"Player\" / 1.0 / Vector2(10, 20)"
+	var prop_button := Button.new()
+	prop_button.text = "设置属性"
+	prop_button.pressed.connect(_scene_set_property)
+	prop_row.add_child(prop_button)
+
+	var script_row := HBoxContainer.new()
+	box.add_child(script_row)
+	_scene_script_node_path = _line(script_row, "脚本节点")
+	_scene_script_path = _line(script_row, "脚本路径")
+	_scene_script_path.placeholder_text = "res://scripts/player.gd"
+	var script_button := Button.new()
+	script_button.text = "挂载脚本"
+	script_button.pressed.connect(_scene_attach_script)
+	script_row.add_child(script_button)
+	return box
+
 func _build_training(parent: Control) -> Control:
 	var box := VBoxContainer.new()
 	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -227,6 +322,36 @@ func _build_training(parent: Control) -> Control:
 	stop_button.text = "Stop"
 	stop_button.pressed.connect(func(): GoGentSingleton.get_instance().training_manager.stop_training())
 	buttons.add_child(stop_button)
+
+	var feedback_title := _label("人工反馈")
+	box.add_child(feedback_title)
+	_feedback_state = _line(box, "状态")
+	_feedback_state.text = "[0,0,0,0]"
+	_feedback_next_state = _line(box, "下一状态")
+	_feedback_next_state.text = "[0,0,0,0]"
+	var feedback_row := HBoxContainer.new()
+	box.add_child(feedback_row)
+	feedback_row.add_child(_label("动作"))
+	_feedback_action = SpinBox.new()
+	_feedback_action.min_value = 0
+	_feedback_action.max_value = 32
+	_feedback_action.step = 1
+	feedback_row.add_child(_feedback_action)
+	feedback_row.add_child(_label("奖励"))
+	_feedback_reward = SpinBox.new()
+	_feedback_reward.min_value = -1000
+	_feedback_reward.max_value = 1000
+	_feedback_reward.step = 0.1
+	_feedback_reward.value = 1.0
+	feedback_row.add_child(_feedback_reward)
+	_feedback_done = CheckBox.new()
+	_feedback_done.text = "终止"
+	feedback_row.add_child(_feedback_done)
+	_feedback_note = _line(box, "备注")
+	var feedback_button := Button.new()
+	feedback_button.text = "记录人工反馈"
+	feedback_button.pressed.connect(_record_human_feedback)
+	box.add_child(feedback_button)
 	return box
 
 func _build_agents(parent: Control) -> Control:
@@ -236,11 +361,66 @@ func _build_agents(parent: Control) -> Control:
 	return panel
 
 func _build_settings(parent: Control) -> Control:
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	parent.add_child(scroll)
 	var box := VBoxContainer.new()
 	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	parent.add_child(box)
+	scroll.add_child(box)
+	box.add_child(_label("模型供应商"))
+	var provider_row := HBoxContainer.new()
+	box.add_child(provider_row)
+	provider_row.add_child(_label("接口类型"))
+	_settings_provider_type = OptionButton.new()
+	_settings_provider_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for item in [
+		{"id": "deepseek", "name": "DeepSeek"},
+		{"id": "openai", "name": "OpenAI"},
+		{"id": "openai_compatible", "name": "OpenAI 兼容"},
+		{"id": "anthropic", "name": "Anthropic Claude"},
+		{"id": "ollama", "name": "Ollama"}
+	]:
+		_settings_provider_type.add_item(item["name"])
+		_settings_provider_type.set_item_metadata(_settings_provider_type.get_item_count() - 1, item["id"])
+	provider_row.add_child(_settings_provider_type)
 	_settings_api_key = _line(box, "API Key", true)
 	_settings_api_url = _line(box, "Base URL")
+
+	box.add_child(_label("当前模型"))
+	_settings_model_display_name = _line(box, "显示名称")
+	_settings_model_name = _line(box, "模型名")
+	_settings_model_max_tokens = _spin(box, "模型上限", 1, 262144, 1, 8192)
+	_settings_model_thinking = CheckButton.new()
+	_settings_model_thinking.text = "支持推理内容"
+	box.add_child(_settings_model_thinking)
+	_settings_model_tools = CheckButton.new()
+	_settings_model_tools.text = "支持工具调用"
+	box.add_child(_settings_model_tools)
+	_settings_model_vision = CheckButton.new()
+	_settings_model_vision.text = "支持视觉输入"
+	box.add_child(_settings_model_vision)
+	var add_model_button := Button.new()
+	add_model_button.text = "把模型名添加到当前供应商"
+	add_model_button.pressed.connect(_add_model_from_settings)
+	box.add_child(add_model_button)
+
+	box.add_child(_label("AI 请求参数"))
+	_settings_temperature = _spin(box, "温度", 0.0, 2.0, 0.05, 0.7)
+	_settings_top_p = _spin(box, "Top P", 0.0, 1.0, 0.05, 1.0)
+	_settings_max_tokens = _spin(box, "输出上限", 1, 262144, 1, 8192)
+	_settings_presence_penalty = _spin(box, "存在惩罚", -2.0, 2.0, 0.05, 0.0)
+	_settings_frequency_penalty = _spin(box, "频率惩罚", -2.0, 2.0, 0.05, 0.0)
+	_settings_timeout = _spin(box, "超时秒数", 1, 600, 1, 120)
+	_settings_reasoning_enabled = CheckButton.new()
+	_settings_reasoning_enabled.text = "启用推理内容适配"
+	box.add_child(_settings_reasoning_enabled)
+	_settings_tools_enabled = CheckButton.new()
+	_settings_tools_enabled.text = "允许工具参数"
+	box.add_child(_settings_tools_enabled)
+	_settings_json_mode = CheckButton.new()
+	_settings_json_mode.text = "JSON 输出模式"
+	box.add_child(_settings_json_mode)
+
 	_settings_proxy_host = _line(box, "Proxy Host")
 	var proxy_row := HBoxContainer.new()
 	box.add_child(proxy_row)
@@ -277,7 +457,7 @@ func _build_settings(parent: Control) -> Control:
 	save.text = "Save Settings"
 	save.pressed.connect(_save_settings)
 	box.add_child(save)
-	return box
+	return scroll
 
 func _connect_signals() -> void:
 	var singleton = GoGentSingleton.get_instance()
@@ -301,6 +481,8 @@ func _connect_signals() -> void:
 			training.training_episode_completed.connect(_on_training_episode)
 		if not training.training_completed.is_connected(_on_training_completed):
 			training.training_completed.connect(_on_training_completed)
+		if not training.human_feedback_recorded.is_connected(_on_human_feedback_recorded):
+			training.human_feedback_recorded.connect(_on_human_feedback_recorded)
 
 func _refresh_models() -> void:
 	if _model_button == null:
@@ -339,10 +521,28 @@ func _load_settings() -> void:
 	if supplier != null:
 		_settings_api_key.text = supplier.api_key
 		_settings_api_url.text = supplier.base_url
+		_select_provider_type(supplier.provider)
+	var model = model_manager.get_current_model() if model_manager else null
+	if model != null:
+		_settings_model_display_name.text = model.name
+		_settings_model_name.text = model.model_name
+		_settings_model_max_tokens.value = model.max_tokens
+		_settings_model_thinking.button_pressed = model.supports_thinking
+		_settings_model_tools.button_pressed = model.supports_tools
+		_settings_model_vision.button_pressed = model.supports_vision
 	var cfg = singleton.config_manager
 	if cfg != null:
 		_settings_proxy_host.text = str(cfg.get_setting("http_proxy_host", ""))
 		_settings_proxy_port.value = int(cfg.get_setting("http_proxy_port", 0))
+		_settings_temperature.value = float(cfg.get_setting("default_temperature", 0.7))
+		_settings_top_p.value = float(cfg.get_setting("default_top_p", 1.0))
+		_settings_max_tokens.value = int(cfg.get_setting("default_max_tokens", 8192))
+		_settings_presence_penalty.value = float(cfg.get_setting("default_presence_penalty", 0.0))
+		_settings_frequency_penalty.value = float(cfg.get_setting("default_frequency_penalty", 0.0))
+		_settings_reasoning_enabled.button_pressed = bool(cfg.get_setting("default_reasoning_enabled", true))
+		_settings_tools_enabled.button_pressed = bool(cfg.get_setting("default_tools_enabled", true))
+		_settings_json_mode.button_pressed = bool(cfg.get_setting("default_json_mode", false))
+		_settings_timeout.value = int(cfg.get_setting("request_timeout", 120))
 		_stream_toggle.button_pressed = bool(cfg.get_setting("stream_by_default", true))
 		_settings_claude_enabled.button_pressed = bool(cfg.get_setting("claude_enabled", true))
 		_settings_claude_command.text = str(cfg.get_setting("claude_command", "claude"))
@@ -511,6 +711,53 @@ func _on_console_message(message: String, kind: String) -> void:
 	_console_output.append_text("[color=%s][%s] %s[/color]\n" % [color, kind.to_upper(), message])
 	_console_output.scroll_to_line(max(0, _console_output.get_line_count() - 1))
 
+func _scene_create_scene() -> void:
+	var manager = GoGentSingleton.get_instance().node_editor_manager
+	if manager == null:
+		_scene_append({"success": false, "error": "节点编辑管理器未就绪。"})
+		return
+	_scene_append(manager.create_scene(_scene_path.text.strip_edges(), _scene_root_class.text.strip_edges()))
+
+func _scene_list_nodes() -> void:
+	var manager = GoGentSingleton.get_instance().node_editor_manager
+	if manager == null:
+		_scene_append({"success": false, "error": "节点编辑管理器未就绪。"})
+		return
+	var result: Dictionary = manager.list_scene_nodes(_scene_path.text.strip_edges(), false)
+	if not result.get("success", false):
+		_scene_append(result)
+		return
+	_scene_output.append_text("[color=#42ffc2]场景：%s[/color]\n" % result.get("scene", ""))
+	for item in result.get("nodes", []):
+		_scene_output.append_text("  %s <%s> children=%d script=%s\n" % [item.get("path", "."), item.get("type", ""), int(item.get("child_count", 0)), item.get("script", "")])
+	_scene_output.scroll_to_line(max(0, _scene_output.get_line_count() - 1))
+
+func _scene_add_node() -> void:
+	var manager = GoGentSingleton.get_instance().node_editor_manager
+	if manager == null:
+		_scene_append({"success": false, "error": "节点编辑管理器未就绪。"})
+		return
+	_scene_append(manager.add_node(_scene_node_class.text.strip_edges(), _scene_parent_path.text.strip_edges(), _scene_node_name.text.strip_edges(), _scene_path.text.strip_edges()))
+
+func _scene_set_property() -> void:
+	var manager = GoGentSingleton.get_instance().node_editor_manager
+	if manager == null:
+		_scene_append({"success": false, "error": "节点编辑管理器未就绪。"})
+		return
+	_scene_append(manager.set_node_property(_scene_property_node_path.text.strip_edges(), _scene_property_name.text.strip_edges(), _scene_property_value.text.strip_edges(), _scene_path.text.strip_edges()))
+
+func _scene_attach_script() -> void:
+	var manager = GoGentSingleton.get_instance().node_editor_manager
+	if manager == null:
+		_scene_append({"success": false, "error": "节点编辑管理器未就绪。"})
+		return
+	_scene_append(manager.attach_script(_scene_script_node_path.text.strip_edges(), _scene_script_path.text.strip_edges(), _scene_path.text.strip_edges()))
+
+func _scene_append(result: Dictionary) -> void:
+	var color := "#42ffc2" if result.get("success", false) else "#ff7085"
+	_scene_output.append_text("[color=%s]%s[/color]\n" % [color, JSON.stringify(result, "\t")])
+	_scene_output.scroll_to_line(max(0, _scene_output.get_line_count() - 1))
+
 func _start_training() -> void:
 	GoGentSingleton.get_instance().training_manager.start_training()
 
@@ -531,6 +778,31 @@ func _on_training_completed(stats: Dictionary) -> void:
 	_training_status.text = "Completed avg %.2f" % float(stats.get("avg_reward", 0.0))
 	_training_progress.value = 100
 
+func _record_human_feedback() -> void:
+	var manager = GoGentSingleton.get_instance().training_manager
+	if manager == null:
+		GoGentSingleton.print_gogent_console("训练管理器未就绪。", "error")
+		return
+	var state_vector := _parse_json_array(_feedback_state.text)
+	var next_state := _parse_json_array(_feedback_next_state.text)
+	if state_vector.is_empty():
+		GoGentSingleton.print_gogent_console("人工反馈状态必须是 JSON 数组。", "error")
+		return
+	manager.record_human_feedback(state_vector, int(_feedback_action.value), float(_feedback_reward.value), next_state, _feedback_done.button_pressed, _feedback_note.text)
+
+func _on_human_feedback_recorded(action: int, reward: float, note: String) -> void:
+	_training_status.text = "已记录人工反馈 action=%d reward=%.2f" % [action, reward]
+	_training_reward.text = "Reward: %.2f" % reward
+	if not note.is_empty():
+		GoGentSingleton.print_gogent_console("人工反馈: " + note, "success")
+	_ensure_chart()
+
+func _parse_json_array(text: String) -> Array:
+	var parsed = JSON.parse_string(text.strip_edges())
+	if parsed is Array:
+		return parsed
+	return []
+
 func _ensure_chart() -> void:
 	if _chart_control != null and is_instance_valid(_chart_control):
 		return
@@ -547,6 +819,15 @@ func _save_settings() -> void:
 		singleton.config_manager.set_many({
 			"http_proxy_host": _settings_proxy_host.text.strip_edges(),
 			"http_proxy_port": int(_settings_proxy_port.value),
+			"default_temperature": float(_settings_temperature.value),
+			"default_top_p": float(_settings_top_p.value),
+			"default_max_tokens": int(_settings_max_tokens.value),
+			"default_presence_penalty": float(_settings_presence_penalty.value),
+			"default_frequency_penalty": float(_settings_frequency_penalty.value),
+			"default_reasoning_enabled": _settings_reasoning_enabled.button_pressed,
+			"default_tools_enabled": _settings_tools_enabled.button_pressed,
+			"default_json_mode": _settings_json_mode.button_pressed,
+			"request_timeout": int(_settings_timeout.value),
 			"stream_by_default": _stream_toggle.button_pressed,
 			"claude_enabled": _settings_claude_enabled.button_pressed,
 			"claude_command": _settings_claude_command.text.strip_edges(),
@@ -554,11 +835,57 @@ func _save_settings() -> void:
 			"codex_command": _settings_codex_command.text.strip_edges()
 		})
 	if singleton.model_manager:
-		singleton.model_manager.set_current_credentials(_settings_api_key.text, _settings_api_url.text)
+		singleton.model_manager.update_current_supplier({
+			"api_key": _settings_api_key.text,
+			"base_url": _settings_api_url.text,
+			"provider": _get_selected_provider_type()
+		})
+		singleton.model_manager.update_current_model({
+			"name": _settings_model_display_name.text,
+			"model_name": _settings_model_name.text,
+			"max_tokens": int(_settings_model_max_tokens.value),
+			"supports_thinking": _settings_model_thinking.button_pressed,
+			"supports_tools": _settings_model_tools.button_pressed,
+			"supports_vision": _settings_model_vision.button_pressed
+		})
 	if singleton.external_tool_manager:
 		singleton.external_tool_manager.load_from_settings()
 	_refresh_models()
 	GoGentSingleton.print_gogent_console("Settings saved.", "success")
+
+func _add_model_from_settings() -> void:
+	var singleton = GoGentSingleton.get_instance()
+	if singleton.model_manager == null:
+		GoGentSingleton.print_gogent_console("模型管理器未就绪。", "error")
+		return
+	var model_name := _settings_model_name.text.strip_edges()
+	if model_name.is_empty():
+		GoGentSingleton.print_gogent_console("模型名不能为空。", "error")
+		return
+	var ok: bool = singleton.model_manager.add_model_to_current(
+		model_name,
+		_settings_model_display_name.text.strip_edges(),
+		int(_settings_model_max_tokens.value),
+		_settings_model_thinking.button_pressed,
+		_settings_model_tools.button_pressed,
+		_settings_model_vision.button_pressed
+	)
+	_refresh_models()
+	GoGentSingleton.print_gogent_console("模型已添加。" if ok else "模型添加失败。", "success" if ok else "error")
+
+func _get_selected_provider_type() -> String:
+	if _settings_provider_type == null or _settings_provider_type.get_selected_id() < 0:
+		return "openai"
+	var meta = _settings_provider_type.get_item_metadata(_settings_provider_type.selected)
+	return str(meta)
+
+func _select_provider_type(provider: String) -> void:
+	if _settings_provider_type == null:
+		return
+	for i in range(_settings_provider_type.get_item_count()):
+		if str(_settings_provider_type.get_item_metadata(i)) == provider:
+			_settings_provider_type.select(i)
+			return
 
 func _check_external_tool(tool_id: String) -> void:
 	var manager = GoGentSingleton.get_instance().external_tool_manager
@@ -588,6 +915,19 @@ func _line(parent: Control, label_text: String, secret: bool = false) -> LineEdi
 	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(line)
 	return line
+
+func _spin(parent: Control, label_text: String, min_value: float, max_value: float, step: float, default_value: float) -> SpinBox:
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	row.add_child(_label(label_text))
+	var spin := SpinBox.new()
+	spin.min_value = min_value
+	spin.max_value = max_value
+	spin.step = step
+	spin.value = default_value
+	spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spin)
+	return spin
 
 func _label(text: String) -> Label:
 	var label := Label.new()
