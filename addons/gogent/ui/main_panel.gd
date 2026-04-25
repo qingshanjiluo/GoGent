@@ -308,6 +308,34 @@ func _build_scene(parent: Control) -> Control:
 	script_row.add_child(script_button)
 	return box
 
+# Training page helper functions (replacing multi-line lambdas)
+# NOTE: These MUST be declared before _build_training() to avoid
+# "not declared in current scope" errors in Godot 4.6.2.
+
+func _on_training_pause() -> void:
+	GoGentSingleton.get_instance().training_manager.pause_training()
+
+func _on_training_resume() -> void:
+	GoGentSingleton.get_instance().training_manager.resume_training()
+
+func _on_training_stop() -> void:
+	GoGentSingleton.get_instance().training_manager.stop_training()
+
+func _on_training_scene_path_changed(text: String) -> void:
+	GoGentSingleton.get_instance().training_manager.config.target_scene = text
+
+func _on_training_node_path_changed(text: String) -> void:
+	GoGentSingleton.get_instance().training_manager.config.target_node = text
+
+func _on_ai_tuning_toggled(enabled: bool) -> void:
+	GoGentSingleton.get_instance().training_manager.config.ai_tuning_enabled = enabled
+
+func _on_ai_tuning_interval_changed(val: float) -> void:
+	GoGentSingleton.get_instance().training_manager.config.ai_tuning_interval = int(val)
+
+func _browse_training_scene() -> void:
+	GoGentSingleton.print_gogent_console("Scene browser requires Godot 4 FileDialog, will be implemented in a future version.", "info")
+
 func _build_training(parent: Control) -> Control:
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -344,15 +372,15 @@ func _build_training(parent: Control) -> Control:
 	buttons.add_child(start_button)
 	var pause_button := Button.new()
 	pause_button.text = "Pause"
-	pause_button.pressed.connect(func(): GoGentSingleton.get_instance().training_manager.pause_training())
+	pause_button.pressed.connect(_on_training_pause)
 	buttons.add_child(pause_button)
 	var resume_button := Button.new()
 	resume_button.text = "Resume"
-	resume_button.pressed.connect(func(): GoGentSingleton.get_instance().training_manager.resume_training())
+	resume_button.pressed.connect(_on_training_resume)
 	buttons.add_child(resume_button)
 	var stop_button := Button.new()
 	stop_button.text = "Stop"
-	stop_button.pressed.connect(func(): GoGentSingleton.get_instance().training_manager.stop_training())
+	stop_button.pressed.connect(_on_training_stop)
 	buttons.add_child(stop_button)
 
 	box.add_child(HSeparator.new())
@@ -368,9 +396,7 @@ func _build_training(parent: Control) -> Control:
 	_training_scene_path = LineEdit.new()
 	_training_scene_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_training_scene_path.placeholder_text = "res://scenes/game.tscn（可选）"
-	_training_scene_path.text_changed.connect(func(text: String):
-		GoGentSingleton.get_instance().training_manager.config.target_scene = text
-	)
+	_training_scene_path.text_changed.connect(_on_training_scene_path_changed)
 	scene_row.add_child(_training_scene_path)
 	var browse_scene_btn := Button.new()
 	browse_scene_btn.text = "浏览"
@@ -383,9 +409,7 @@ func _build_training(parent: Control) -> Control:
 	_training_node_path = LineEdit.new()
 	_training_node_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_training_node_path.placeholder_text = "Player/AIController（可选）"
-	_training_node_path.text_changed.connect(func(text: String):
-		GoGentSingleton.get_instance().training_manager.config.target_node = text
-	)
+	_training_node_path.text_changed.connect(_on_training_node_path_changed)
 	node_row.add_child(_training_node_path)
 
 	box.add_child(HSeparator.new())
@@ -400,9 +424,7 @@ func _build_training(parent: Control) -> Control:
 	var ai_tuning_toggle := CheckButton.new()
 	ai_tuning_toggle.text = "启用 AI 调参"
 	ai_tuning_toggle.button_pressed = false
-	ai_tuning_toggle.toggled.connect(func(enabled: bool):
-		GoGentSingleton.get_instance().training_manager.config.ai_tuning_enabled = enabled
-	)
+	ai_tuning_toggle.toggled.connect(_on_ai_tuning_toggled)
 	ai_tuning_row.add_child(ai_tuning_toggle)
 	ai_tuning_row.add_child(_label("间隔"))
 	var ai_tuning_interval := SpinBox.new()
@@ -410,9 +432,7 @@ func _build_training(parent: Control) -> Control:
 	ai_tuning_interval.max_value = 100
 	ai_tuning_interval.step = 1
 	ai_tuning_interval.value = 10
-	ai_tuning_interval.value_changed.connect(func(val: float):
-		GoGentSingleton.get_instance().training_manager.config.ai_tuning_interval = int(val)
-	)
+	ai_tuning_interval.value_changed.connect(_on_ai_tuning_interval_changed)
 	ai_tuning_row.add_child(ai_tuning_interval)
 	ai_tuning_row.add_child(_label("episode"))
 
@@ -633,20 +653,11 @@ func _build_info(parent: Control) -> Control:
 
 	box.add_child(HSeparator.new())
 
-	# 简介
+	# 简介（使用普通字符串拼接避免 """ 多行字符串的缩进问题）
 	var intro := RichTextLabel.new()
 	intro.bbcode_enabled = true
 	intro.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	intro.text = """[b]GoGent[/b] 是一个 Godot 4 编辑器插件，为游戏开发提供 AI 驱动的智能辅助。
-
-[b]核心功能：[/b]
-• [b]AI 对话[/b] - 与 AI 对话，AI 可以读取项目文件、编辑代码、操作场景节点
-• [b]场景编辑[/b] - AI 可以直接创建场景、添加节点、设置属性、挂载脚本
-• [b]人机训练[/b] - 内置 DQN 强化学习训练器，支持人工反馈和 AI 自动调参
-• [b]Agent 协作[/b] - 创建多个自定义 Agent，分工协作完成复杂任务
-• [b]错误检查[/b] - AI 可以扫描项目中的所有脚本，检查语法错误
-• [b]外部工具[/b] - 支持 Claude Code 和 Codex CLI 集成
-"""
+	intro.text = "[b]GoGent[/b] 是一个 Godot 4 编辑器插件，为游戏开发提供 AI 驱动的智能辅助。\n\n[b]核心功能：[/b]\n[color=#abc9ff]•[/color] [b]AI 对话[/b] - 与 AI 对话，AI 可以读取项目文件、编辑代码、操作场景节点\n[color=#abc9ff]•[/color] [b]场景编辑[/b] - AI 可以直接创建场景、添加节点、设置属性、挂载脚本\n[color=#abc9ff]•[/color] [b]人机训练[/b] - 内置 DQN 强化学习训练器，支持人工反馈和 AI 自动调参\n[color=#abc9ff]•[/color] [b]Agent 协作[/b] - 创建多个自定义 Agent，分工协作完成复杂任务\n[color=#abc9ff]•[/color] [b]错误检查[/b] - AI 可以扫描项目中的所有脚本，检查语法错误\n[color=#abc9ff]•[/color] [b]外部工具[/b] - 支持 Claude Code 和 Codex CLI 集成"
 	intro.scroll_active = false
 	box.add_child(intro)
 
@@ -654,7 +665,7 @@ func _build_info(parent: Control) -> Control:
 
 	# 使用教程
 	var tutorial_title := Label.new()
-	tutorial_title.text = "📖 使用教程"
+	tutorial_title.text = "使用教程"
 	tutorial_title.add_theme_font_size_override("font_size", 16)
 	box.add_child(tutorial_title)
 
@@ -662,39 +673,7 @@ func _build_info(parent: Control) -> Control:
 	tutorial.bbcode_enabled = true
 	tutorial.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial.scroll_active = false
-	tutorial.text = """[b]1. 基本设置[/b]
-	  在「设置」页面选择语言、模型供应商（DeepSeek/OpenAI/Claude 等）、输入 API Key。
-	  点击「把模型名添加到当前供应商」添加模型。
-
-[b]2. AI 对话与工具调用[/b]
-	  在「对话」页面输入任务，AI 会自动调用工具来：
-	  - 读取/写入项目文件（read_file / write_file）
-	  - 创建/编辑场景节点（add_node / set_node_property）
-	  - 挂载脚本到节点（attach_script）
-	  - 检查项目错误（check_errors）
-	  AI 会先观察项目结构，再制定计划，最后执行修改。
-
-[b]3. 场景编辑[/b]
-	  在「场景」页面可以手动创建场景、添加节点、设置属性和挂载脚本。
-	  AI 也可以通过工具自动完成这些操作。
-
-[b]4. 人机训练[/b]
-	  在「训练」页面启动 DQN 训练。训练过程中可以：
-	  - 记录人工反馈来指导 AI 学习
-	  - 开启「AI 自动调参」让 AI 自动优化超参数
-	  - 查看训练图表和统计数据
-
-[b]5. Agent 协作[/b]
-	  在「Agent」页面创建多个自定义 Agent，每个 Agent 可以有不同的角色和技能。
-	  在对话页面选择 Agent 并输入任务，多个 Agent 可以协作完成复杂工作。
-
-[b]6. 控制台命令[/b]
-	  在「控制台」页面可以执行各种命令：
-	  - help - 查看所有可用命令
-	  - list_files / read_file / write_file - 文件操作
-	  - train / stop_train - 训练控制
-	  - ai_settings - 调整 AI 参数
-"""
+	tutorial.text = "[b]1. 基本设置[/b]\n在设置页面选择语言、模型供应商（DeepSeek/OpenAI/Claude 等）、输入 API Key。点击「把模型名添加到当前供应商」添加模型。\n\n[b]2. AI 对话与工具调用[/b]\n在对话页面输入任务，AI 会自动调用工具来：\n- 读取/写入项目文件（read_file / write_file）\n- 创建/编辑场景节点（add_node / set_node_property）\n- 挂载脚本到节点（attach_script）\n- 检查项目错误（check_errors）\nAI 会先观察项目结构，再制定计划，最后执行修改。\n\n[b]3. 场景编辑[/b]\n在场景页面可以手动创建场景、添加节点、设置属性和挂载脚本。AI 也可以通过工具自动完成这些操作。\n\n[b]4. 人机训练[/b]\n在训练页面启动 DQN 训练。训练过程中可以：\n- 记录人工反馈来指导 AI 学习\n- 开启「AI 自动调参」让 AI 自动优化超参数\n- 查看训练图表和统计数据\n\n[b]5. Agent 协作[/b]\n在 Agent 页面创建多个自定义 Agent，每个 Agent 可以有不同的角色和技能。在对话页面选择 Agent 并输入任务，多个 Agent 可以协作完成复杂工作。\n\n[b]6. 控制台命令[/b]\n在控制台页面可以执行各种命令：\n- help - 查看所有可用命令\n- list_files / read_file / write_file - 文件操作\n- train / stop_train - 训练控制\n- ai_settings - 调整 AI 参数"
 	box.add_child(tutorial)
 
 	box.add_child(HSeparator.new())
@@ -1299,10 +1278,10 @@ func _refresh_ai_tuning_history() -> void:
 	# 只显示最近 10 条
 	var start := max(0, history.size() - 10)
 	for i in range(start, history.size()):
-		var entry = history[i]
+		var entry = history[i] as Dictionary
 		var episode := int(entry.get("episode", 0))
-		var changed := entry.get("changed_params", {})
-		var analysis := str(entry.get("analysis", ""))
+		var changed = entry.get("changed_params", {}) as Dictionary
+		var analysis: String = str(entry.get("analysis", ""))
 		var parts := PackedStringArray()
 		for key in changed.keys():
 			var val = changed[key]
@@ -1504,3 +1483,4 @@ func _label(text: String) -> Label:
 	label.text = text
 	label.custom_minimum_size = Vector2(92, 0)
 	return label
+
