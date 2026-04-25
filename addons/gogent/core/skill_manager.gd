@@ -103,6 +103,40 @@ func add_skill(skill: SkillDefinition) -> void:
 	skills.append(skill)
 	save_skills()
 
+func import_skill_zip(zip_path: String) -> Dictionary:
+	var path := zip_path.strip_edges()
+	if path.is_empty():
+		return {"success": false, "error": "ZIP 路径不能为空。"}
+	var reader := ZIPReader.new()
+	var open_error := reader.open(path)
+	if open_error != OK:
+		open_error = reader.open(ProjectSettings.globalize_path(path))
+	if open_error != OK:
+		return {"success": false, "error": "无法打开 Skill ZIP: %s" % error_string(open_error)}
+	var imported := 0
+	var errors: Array[String] = []
+	for file_path in reader.get_files():
+		if file_path.ends_with("/") or file_path.find("..") >= 0:
+			continue
+		var lower := file_path.to_lower()
+		if lower.ends_with(".json"):
+			var bytes := reader.read_file(file_path)
+			var parsed = JSON.parse_string(bytes.get_string_from_utf8())
+			if parsed is Dictionary:
+				imported += _import_skill_data(parsed)
+			else:
+				errors.append("JSON 无效: %s" % file_path)
+		elif lower.ends_with(".md") or lower.ends_with(".txt"):
+			var bytes := reader.read_file(file_path)
+			var skill := SkillDefinition.new(file_path.get_file().get_basename(), file_path.get_file().get_basename(), "从 ZIP 导入的文本 Skill")
+			skill.category = "imported"
+			skill.prompt_template = bytes.get_string_from_utf8()
+			_upsert_skill(skill)
+			imported += 1
+	reader.close()
+	save_skills()
+	return {"success": imported > 0, "imported": imported, "errors": errors}
+
 func remove_skill(skill_id: String) -> void:
 	for i in range(skills.size()):
 		if skills[i].id == skill_id:
@@ -147,3 +181,22 @@ func execute_skill(skill_id: String, params: Dictionary) -> Dictionary:
 		options["model"] = skill.model_name
 	api.send_chat_request([{"role": "user", "content": prompt}], options)
 	return {"success": true, "skill_name": skill.name, "prompt": prompt}
+
+func _import_skill_data(data: Dictionary) -> int:
+	var count := 0
+	if data.has("skills") and data["skills"] is Array:
+		for item in data["skills"]:
+			if item is Dictionary:
+				_upsert_skill(SkillDefinition.from_dict(item))
+				count += 1
+	else:
+		_upsert_skill(SkillDefinition.from_dict(data))
+		count += 1
+	return count
+
+func _upsert_skill(skill: SkillDefinition) -> void:
+	for i in range(skills.size()):
+		if skills[i].id == skill.id:
+			skills[i] = skill
+			return
+	skills.append(skill)

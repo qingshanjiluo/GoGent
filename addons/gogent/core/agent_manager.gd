@@ -204,17 +204,23 @@ func build_messages_for_agent(agent: AgentConfig, user_text: String) -> Array[Di
 
 func _build_editor_tool_prompt() -> String:
 	var node_editor = GoGentSingleton.get_instance().node_editor_manager
-	if node_editor == null:
+	var workspace_tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if node_editor == null and workspace_tools == null:
 		return ""
-	var tools: Array[Dictionary] = node_editor.get_agent_tool_manifest()
+	var tools: Array[Dictionary] = []
+	if node_editor != null:
+		tools.append_array(node_editor.get_agent_tool_manifest())
+	if workspace_tools != null:
+		tools.append_array(workspace_tools.get_tool_manifest())
 	if tools.is_empty():
 		return ""
 	var lines := PackedStringArray()
 	lines.append("")
-	lines.append("可用 Godot 编辑器工具：你可以要求用户在 GoGent Console 中执行这些命令，也可以在协作结果中给出准确命令。")
+	lines.append("可用 GoGent 工具：你可以读取/写入项目文件、搜索代码、执行控制台命令、创建和编辑 Godot 节点。需要真实修改项目时，使用 <gogent_tool>{\"tool\":\"write_file\",\"args\":{\"path\":\"res://...\",\"content\":\"...\"}}</gogent_tool> 这类工具调用。")
 	for tool in tools:
 		lines.append("- %s：%s" % [tool.get("name", ""), tool.get("description", "")])
 	lines.append("常用命令包括 editor_info、list_scene_nodes、create_scene、add_node、set_node_prop、delete_node、select_node、attach_script。")
+	lines.append("项目文件工具包括 list_files、read_file、write_file、append_file、search_text、console。")
 	lines.append("AI 设置命令包括 ai_settings 和 set_ai_option，可调整 temperature、top_p、max_tokens、json_mode、request_timeout 等参数。")
 	lines.append("人机训练命令包括 train、stop_train、feedback，feedback 格式为 feedback <state_json> <action> <reward> [next_state_json] [done] [note]。")
 	return "\n".join(lines)

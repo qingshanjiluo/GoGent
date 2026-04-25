@@ -74,6 +74,13 @@ func _register_default_commands() -> void:
 	register_command("select_model", "Select a model by provider/model index.", _cmd_select_model, ["supplier_index", "model_index"])
 	register_command("ai_settings", "Show current AI request settings.", _cmd_ai_settings)
 	register_command("set_ai_option", "Set an AI request option.", _cmd_set_ai_option, ["key", "value"])
+	register_command("list_files", "List project files.", _cmd_list_files, ["path"])
+	register_command("read_file", "Read a project text file.", _cmd_read_file, ["path"])
+	register_command("write_file", "Write a project text file.", _cmd_write_file, ["path", "content"])
+	register_command("search_text", "Search project text files.", _cmd_search_text, ["query", "path"])
+	register_command("import_skill_zip", "Import skills from a zip file.", _cmd_import_skill_zip, ["zip_path"])
+	register_command("chat_history", "List saved chat histories.", _cmd_chat_history)
+	register_command("load_chat", "Load a saved chat history.", _cmd_load_chat, ["conversation_id"])
 	register_command("api_test", "Send a short API request.", _cmd_api_test)
 	register_command("external_status", "Check Claude Code and Codex CLI availability.", _cmd_external_status)
 	register_command("claude", "Send a prompt to Claude Code CLI.", _cmd_claude, ["prompt"])
@@ -198,6 +205,59 @@ func _cmd_set_ai_option(args: Array[String]) -> String:
 	var value = _parse_setting_value(setting_key, raw)
 	cfg.set_setting(setting_key, value)
 	return "AI option saved: %s = %s" % [setting_key, str(value)]
+
+func _cmd_list_files(args: Array[String]) -> String:
+	var tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if tools == null:
+		return "Workspace tool manager is not ready."
+	var result: Dictionary = tools.list_files(args[0] if not args.is_empty() else "res://", true, 200)
+	return JSON.stringify(result, "\t")
+
+func _cmd_read_file(args: Array[String]) -> String:
+	if args.is_empty():
+		return "Usage: read_file <res://path>"
+	var tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if tools == null:
+		return "Workspace tool manager is not ready."
+	return JSON.stringify(tools.read_file(args[0]), "\t")
+
+func _cmd_write_file(args: Array[String]) -> String:
+	if args.size() < 2:
+		return "Usage: write_file <res://path> <content>"
+	var tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if tools == null:
+		return "Workspace tool manager is not ready."
+	return JSON.stringify(tools.write_file(args[0], " ".join(args.slice(1))), "\t")
+
+func _cmd_search_text(args: Array[String]) -> String:
+	if args.is_empty():
+		return "Usage: search_text <query> [res://path]"
+	var tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if tools == null:
+		return "Workspace tool manager is not ready."
+	return JSON.stringify(tools.search_text(args[0], args[1] if args.size() >= 2 else "res://", 100), "\t")
+
+func _cmd_import_skill_zip(args: Array[String]) -> String:
+	if args.is_empty():
+		return "Usage: import_skill_zip <zip_path>"
+	var manager = GoGentSingleton.get_instance().skill_manager
+	if manager == null:
+		return "Skill manager is not ready."
+	return JSON.stringify(manager.import_skill_zip(args[0]), "\t")
+
+func _cmd_chat_history(_args: Array[String]) -> String:
+	var manager = GoGentSingleton.get_instance().conversation_manager
+	if manager == null:
+		return "Conversation manager is not ready."
+	return JSON.stringify(manager.list_conversations(), "\t")
+
+func _cmd_load_chat(args: Array[String]) -> String:
+	if args.is_empty():
+		return "Usage: load_chat <conversation_id>"
+	var manager = GoGentSingleton.get_instance().conversation_manager
+	if manager == null:
+		return "Conversation manager is not ready."
+	return "Loaded chat." if manager.load_conversation(args[0]) else "Chat not found."
 
 func _cmd_api_test(_args: Array[String]) -> String:
 	var api = GoGentSingleton.get_instance().api_manager

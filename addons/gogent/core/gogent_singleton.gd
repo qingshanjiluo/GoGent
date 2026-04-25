@@ -20,6 +20,8 @@ var skill_manager
 var stream_manager
 var external_tool_manager
 var node_editor_manager
+var conversation_manager
+var workspace_tool_manager
 
 const ConfigManagerScript := preload("res://addons/gogent/core/config_manager.gd")
 const ModelManagerScript := preload("res://addons/gogent/core/model_manager.gd")
@@ -30,6 +32,8 @@ const APIManagerScript := preload("res://addons/gogent/core/api_manager.gd")
 const SkillManagerScript := preload("res://addons/gogent/core/skill_manager.gd")
 const ExternalToolManagerScript := preload("res://addons/gogent/core/external_tool_manager.gd")
 const NodeEditorManagerScript := preload("res://addons/gogent/core/node_editor_manager.gd")
+const ConversationManagerScript := preload("res://addons/gogent/core/conversation_manager.gd")
+const WorkspaceToolManagerScript := preload("res://addons/gogent/core/workspace_tool_manager.gd")
 
 static func get_instance() -> GoGentSingleton:
 	if _instance == null:
@@ -53,6 +57,8 @@ func load_all_configs() -> void:
 	skill_manager = SkillManagerScript.new()
 	external_tool_manager = ExternalToolManagerScript.new()
 	node_editor_manager = NodeEditorManagerScript.new()
+	conversation_manager = ConversationManagerScript.new()
+	workspace_tool_manager = WorkspaceToolManagerScript.new()
 	print_gogent_console("All GoGent managers loaded.", "success")
 
 func get_scene_tree() -> SceneTree:

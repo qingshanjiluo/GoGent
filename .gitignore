@@ -6,6 +6,7 @@ import/
 *.translation
 
 # Local runtime configuration and secrets
+addons/gogent/config/
 addons/gogent/config/*.json
 addons/gogent/config/*.cfg
 addons/gogent/config/trained_models/

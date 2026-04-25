@@ -15,6 +15,7 @@ var _send_button: Button
 var _stream_toggle: CheckButton
 var _model_button: OptionButton
 var _agent_button: OptionButton
+var _history_button: OptionButton
 var _console_output: RichTextLabel
 var _console_input: LineEdit
 var _scene_output: RichTextLabel
@@ -42,6 +43,12 @@ var _feedback_note: LineEdit
 var _chart_holder: PanelContainer
 var _settings_api_key: LineEdit
 var _settings_api_url: LineEdit
+var _settings_language: OptionButton
+var _settings_history_enabled: CheckButton
+var _settings_auto_apply_tools: CheckButton
+var _settings_auto_continue_tools: CheckButton
+var _settings_max_tool_rounds: SpinBox
+var _settings_skill_zip_path: LineEdit
 var _settings_provider_type: OptionButton
 var _settings_model_name: LineEdit
 var _settings_model_display_name: LineEdit
@@ -68,6 +75,7 @@ var _settings_codex_enabled: CheckButton
 var _messages: Array[Dictionary] = []
 var _is_generating := false
 var _stream_request_id := -1
+var _auto_tool_round := 0
 var _stream_item: GoGentMessageItem
 var _stream_text := ""
 var _stream_thinking := ""
@@ -78,6 +86,7 @@ func _ready() -> void:
 		_build_ui()
 	_connect_signals()
 	refresh_from_managers()
+	_show_tutorial_if_needed.call_deferred()
 
 func _process(delta: float) -> void:
 	var stream = GoGentSingleton.get_instance().stream_manager
@@ -92,6 +101,7 @@ func is_gogent_main_panel() -> bool:
 func refresh_from_managers() -> void:
 	_refresh_models()
 	_refresh_agents()
+	_refresh_history()
 	_load_settings()
 
 func _build_ui() -> void:
@@ -101,14 +111,14 @@ func _build_ui() -> void:
 	root.add_theme_constant_override("separation", 4)
 	add_child(root)
 
-	var tabs := HBoxContainer.new()
+	var tabs := HFlowContainer.new()
 	root.add_child(tabs)
-	_add_tab(tabs, "Chat")
-	_add_tab(tabs, "Console")
-	_add_tab(tabs, "Scene")
-	_add_tab(tabs, "Training")
-	_add_tab(tabs, "Agents")
-	_add_tab(tabs, "Settings")
+	_add_tab(tabs, "Chat", "对话")
+	_add_tab(tabs, "Console", "控制台")
+	_add_tab(tabs, "Scene", "场景")
+	_add_tab(tabs, "Training", "训练")
+	_add_tab(tabs, "Agents", "Agent")
+	_add_tab(tabs, "Settings", "设置")
 
 	_containers["Chat"] = _build_chat(root)
 	_containers["Console"] = _build_console(root)
@@ -118,11 +128,11 @@ func _build_ui() -> void:
 	_containers["Settings"] = _build_settings(root)
 	_show_tab("Chat")
 
-func _add_tab(parent: Control, title: String) -> void:
+func _add_tab(parent: Control, title: String, label_text: String) -> void:
 	var button := Button.new()
-	button.text = title
+	button.text = label_text
 	button.toggle_mode = true
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size = Vector2(92, 0)
 	button.pressed.connect(func(): _show_tab(title))
 	parent.add_child(button)
 	_tab_buttons[title] = button
@@ -138,7 +148,7 @@ func _build_chat(parent: Control) -> Control:
 	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	parent.add_child(box)
 
-	var model_row := HBoxContainer.new()
+	var model_row := HFlowContainer.new()
 	box.add_child(model_row)
 	_model_button = OptionButton.new()
 	_model_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -148,11 +158,18 @@ func _build_chat(parent: Control) -> Control:
 	_agent_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	model_row.add_child(_agent_button)
 	var new_button := Button.new()
-	new_button.text = "New"
+	new_button.text = "新对话"
 	new_button.pressed.connect(_new_chat)
 	model_row.add_child(new_button)
+	_history_button = OptionButton.new()
+	_history_button.custom_minimum_size = Vector2(160, 0)
+	model_row.add_child(_history_button)
+	var load_history_button := Button.new()
+	load_history_button.text = "加载历史"
+	load_history_button.pressed.connect(_load_selected_history)
+	model_row.add_child(load_history_button)
 	var collaborate_button := Button.new()
-	collaborate_button.text = "Collaborate"
+	collaborate_button.text = "协作"
 	collaborate_button.pressed.connect(_collaborate)
 	model_row.add_child(collaborate_button)
 	var claude_button := Button.new()
@@ -164,12 +181,12 @@ func _build_chat(parent: Control) -> Control:
 	codex_button.pressed.connect(func(): _send_external_prompt("codex"))
 	model_row.add_child(codex_button)
 	_stream_toggle = CheckButton.new()
-	_stream_toggle.text = "Stream"
+	_stream_toggle.text = "流式"
 	_stream_toggle.button_pressed = true
 	model_row.add_child(_stream_toggle)
 
 	_welcome = Label.new()
-	_welcome.text = "GoGent\nAI chat, agents, console tools, and training monitor."
+	_welcome.text = "GoGent\n对话、Agent 集群、工具调用、场景编辑和人机训练。"
 	_welcome.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_welcome.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_welcome.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -189,12 +206,12 @@ func _build_chat(parent: Control) -> Control:
 	input_panel.add_child(input_box)
 	_user_input = TextEdit.new()
 	_user_input.custom_minimum_size = Vector2(0, 84)
-	_user_input.placeholder_text = "Type a message. Enter sends, Shift+Enter inserts a newline."
+	_user_input.placeholder_text = "输入任务。Enter 发送，Shift+Enter 换行。AI 可用 <gogent_tool> 调用项目工具。"
 	_user_input.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_user_input.gui_input.connect(_on_input_gui)
 	input_box.add_child(_user_input)
 	_send_button = Button.new()
-	_send_button.text = "Send"
+	_send_button.text = "发送"
 	_send_button.pressed.connect(_send_message)
 	input_box.add_child(_send_button)
 	return box
@@ -207,21 +224,21 @@ func _build_console(parent: Control) -> Control:
 	_console_output.bbcode_enabled = true
 	_console_output.scroll_active = true
 	_console_output.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_console_output.text = "[color=#42ffc2]GoGent console ready.[/color]\nType help for commands.\n"
+	_console_output.text = "[color=#42ffc2]GoGent 控制台已就绪。[/color]\n输入 help 查看命令。\n"
 	box.add_child(_console_output)
 	var row := HBoxContainer.new()
 	box.add_child(row)
 	_console_input = LineEdit.new()
-	_console_input.placeholder_text = "Command"
+	_console_input.placeholder_text = "命令"
 	_console_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_console_input.text_submitted.connect(func(_text: String): _run_console_command())
 	row.add_child(_console_input)
 	var run_button := Button.new()
-	run_button.text = "Run"
+	run_button.text = "运行"
 	run_button.pressed.connect(_run_console_command)
 	row.add_child(run_button)
 	var clear_button := Button.new()
-	clear_button.text = "Clear"
+	clear_button.text = "清空"
 	clear_button.pressed.connect(func(): _console_output.text = "")
 	row.add_child(clear_button)
 	return box
@@ -367,6 +384,28 @@ func _build_settings(parent: Control) -> Control:
 	var box := VBoxContainer.new()
 	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(box)
+	box.add_child(_label("基础设置"))
+	var language_row := HBoxContainer.new()
+	box.add_child(language_row)
+	language_row.add_child(_label("语言"))
+	_settings_language = OptionButton.new()
+	_settings_language.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_settings_language.add_item("中文")
+	_settings_language.set_item_metadata(0, "zh_CN")
+	_settings_language.add_item("English")
+	_settings_language.set_item_metadata(1, "en_US")
+	language_row.add_child(_settings_language)
+	_settings_history_enabled = CheckButton.new()
+	_settings_history_enabled.text = "保存对话历史"
+	box.add_child(_settings_history_enabled)
+	_settings_auto_apply_tools = CheckButton.new()
+	_settings_auto_apply_tools.text = "自动执行 AI 工具调用"
+	box.add_child(_settings_auto_apply_tools)
+	_settings_auto_continue_tools = CheckButton.new()
+	_settings_auto_continue_tools.text = "工具执行后自动续作"
+	box.add_child(_settings_auto_continue_tools)
+	_settings_max_tool_rounds = _spin(box, "续作轮数", 1, 20, 1, 4)
+
 	box.add_child(_label("模型供应商"))
 	var provider_row := HBoxContainer.new()
 	box.add_child(provider_row)
@@ -420,6 +459,14 @@ func _build_settings(parent: Control) -> Control:
 	_settings_json_mode = CheckButton.new()
 	_settings_json_mode.text = "JSON 输出模式"
 	box.add_child(_settings_json_mode)
+
+	box.add_child(_label("Skill ZIP"))
+	_settings_skill_zip_path = _line(box, "ZIP 路径")
+	_settings_skill_zip_path.placeholder_text = "C:/skills/godot-skill.zip 或 res://skills.zip"
+	var import_skill_button := Button.new()
+	import_skill_button.text = "导入 Skill ZIP"
+	import_skill_button.pressed.connect(_import_skill_zip)
+	box.add_child(import_skill_button)
 
 	_settings_proxy_host = _line(box, "Proxy Host")
 	var proxy_row := HBoxContainer.new()
@@ -514,6 +561,17 @@ func _refresh_agents() -> void:
 		_agent_button.add_item(agent.name)
 		_agent_button.set_item_metadata(_agent_button.get_item_count() - 1, agent.id)
 
+func _refresh_history() -> void:
+	if _history_button == null:
+		return
+	_history_button.clear()
+	var manager = GoGentSingleton.get_instance().conversation_manager
+	if manager == null:
+		return
+	for item in manager.list_conversations():
+		_history_button.add_item("%s (%d)" % [item.get("title", item.get("id", "")), int(item.get("message_count", 0))])
+		_history_button.set_item_metadata(_history_button.get_item_count() - 1, item.get("id", ""))
+
 func _load_settings() -> void:
 	var singleton = GoGentSingleton.get_instance()
 	var model_manager = singleton.model_manager
@@ -532,6 +590,11 @@ func _load_settings() -> void:
 		_settings_model_vision.button_pressed = model.supports_vision
 	var cfg = singleton.config_manager
 	if cfg != null:
+		_select_language(str(cfg.get_setting("language", "zh_CN")))
+		_settings_history_enabled.button_pressed = bool(cfg.get_setting("conversation_history_enabled", true))
+		_settings_auto_apply_tools.button_pressed = bool(cfg.get_setting("auto_apply_tool_calls", true))
+		_settings_auto_continue_tools.button_pressed = bool(cfg.get_setting("auto_continue_tool_calls", true))
+		_settings_max_tool_rounds.value = int(cfg.get_setting("max_auto_tool_rounds", 4))
 		_settings_proxy_host.text = str(cfg.get_setting("http_proxy_host", ""))
 		_settings_proxy_port.value = int(cfg.get_setting("http_proxy_port", 0))
 		_settings_temperature.value = float(cfg.get_setting("default_temperature", 0.7))
@@ -562,27 +625,30 @@ func _send_message() -> void:
 	if text.is_empty():
 		return
 	_user_input.text = ""
+	_auto_tool_round = 0
 	_add_user_message(text)
 	_messages.append({"role": "user", "content": text})
+	_save_conversation_message("user", text)
 	_welcome.visible = false
 	_message_scroll.visible = true
 	_is_generating = true
 	_send_button.text = "Stop"
+	var request_messages := _build_request_messages()
 	if _stream_toggle.button_pressed:
 		var supplier = GoGentSingleton.get_instance().model_manager.get_current_supplier()
 		if supplier != null and supplier.provider == "anthropic":
-			GoGentSingleton.get_instance().api_manager.send_chat_request(_messages)
+			GoGentSingleton.get_instance().api_manager.send_chat_request(request_messages)
 		else:
-			_start_stream_request()
+			_start_stream_request(request_messages)
 	else:
-		GoGentSingleton.get_instance().api_manager.send_chat_request(_messages)
+		GoGentSingleton.get_instance().api_manager.send_chat_request(request_messages)
 
-func _start_stream_request() -> void:
+func _start_stream_request(request_messages: Array[Dictionary]) -> void:
 	_stream_text = ""
 	_stream_thinking = ""
 	_stream_item = _new_message_item()
 	_stream_item.set_assistant_message("")
-	_stream_request_id = GoGentSingleton.get_instance().api_manager.send_stream_chat_request(_messages)
+	_stream_request_id = GoGentSingleton.get_instance().api_manager.send_stream_chat_request(request_messages)
 	if _stream_request_id < 0:
 		_finish_generation()
 		_stream_item.set_assistant_message("[color=#ff7085]Unable to start stream request.[/color]")
@@ -595,7 +661,9 @@ func _on_api_response(success: bool, response: String, thinking: String) -> void
 	_finish_generation()
 	if success:
 		_messages.append({"role": "assistant", "content": response})
+		_save_conversation_message("assistant", response, {"thinking": thinking})
 		_add_assistant_message(response, thinking)
+		_process_tool_calls(response)
 	else:
 		_add_assistant_message("[color=#ff7085]%s[/color]" % response)
 
@@ -618,7 +686,9 @@ func _on_stream_completed(success: bool, response: String, thinking: String, req
 	_finish_generation()
 	if success:
 		_messages.append({"role": "assistant", "content": response})
+		_save_conversation_message("assistant", response, {"thinking": thinking})
 		_stream_item.set_assistant_message(response, thinking)
+		_process_tool_calls(response)
 	else:
 		_stream_item.set_assistant_message("[color=#ff7085]%s[/color]" % response)
 	_stream_item = null
@@ -626,14 +696,18 @@ func _on_stream_completed(success: bool, response: String, thinking: String, req
 
 func _finish_generation() -> void:
 	_is_generating = false
-	_send_button.text = "Send"
+	_send_button.text = "发送"
 
 func _new_chat() -> void:
 	_messages.clear()
+	var conversation = GoGentSingleton.get_instance().conversation_manager
+	if conversation != null:
+		conversation.new_conversation()
 	for child in _message_list.get_children():
 		child.queue_free()
 	_welcome.visible = true
 	_message_scroll.visible = false
+	_refresh_history()
 
 func _collaborate() -> void:
 	var text := _user_input.text.strip_edges()
@@ -664,10 +738,109 @@ func _send_external_prompt(tool_id: String) -> void:
 	_welcome.visible = false
 	_message_scroll.visible = true
 	_add_user_message(text + " [%s]" % tool_id)
+	_save_conversation_message("user", text + " [%s]" % tool_id)
 	var result: Dictionary = manager.run_prompt(tool_id, text, "Godot project: %s" % ProjectSettings.globalize_path("res://"))
 	var prefix := "Claude Code" if tool_id == "claude" else "Codex"
 	var color := "#42ffc2" if result.get("success", false) else "#ff7085"
-	_add_assistant_message("[color=%s][b]%s[/b][/color]\n%s" % [color, prefix, result.get("output", "")])
+	var output := "[color=%s][b]%s[/b][/color]\n%s" % [color, prefix, result.get("output", "")]
+	_add_assistant_message(output)
+	_save_conversation_message("assistant", output)
+
+func _build_request_messages() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var system_prompt := _build_tool_system_prompt()
+	if not system_prompt.is_empty():
+		result.append({"role": "system", "content": system_prompt})
+	result.append_array(_messages)
+	return result
+
+func _build_tool_system_prompt() -> String:
+	var tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if tools == null:
+		return ""
+	var lines := PackedStringArray()
+	lines.append("你正在 Godot 编辑器插件 GoGent 中工作。你可以像 RooCode 一样先观察项目、再计划、再调用工具真实修改项目。")
+	lines.append("需要调用工具时，请输出一个或多个 <gogent_tool>{\"tool\":\"工具名\",\"args\":{...}}</gogent_tool> 标签。工具执行结果会回填到对话中，你可以继续工作。")
+	lines.append("可用工具：")
+	for tool in tools.get_tool_manifest():
+		lines.append("- %s：%s" % [tool.get("name", ""), tool.get("description", "")])
+	lines.append("重要：write_file 和 append_file 会真实修改 Godot 项目文件；console 可以调用场景编辑、训练、Claude/Codex 外部 Agent 等命令。")
+	return "\n".join(lines)
+
+func _process_tool_calls(response: String) -> void:
+	var cfg = GoGentSingleton.get_instance().config_manager
+	if cfg == null or not bool(cfg.get_setting("auto_apply_tool_calls", true)):
+		return
+	var calls := _extract_tool_calls(response)
+	if calls.is_empty():
+		_auto_tool_round = 0
+		return
+	var tools = GoGentSingleton.get_instance().workspace_tool_manager
+	if tools == null:
+		return
+	var results: Array[Dictionary] = []
+	for call in calls:
+		var result: Dictionary = tools.execute_tool_call(call)
+		results.append({"call": call, "result": result})
+	var text := "工具执行结果：\n" + JSON.stringify(results, "\t")
+	_add_assistant_message("[color=#42ffc2]工具执行完成[/color]\n" + text)
+	_messages.append({"role": "user", "content": text})
+	_save_conversation_message("tool", text, {"results": results})
+	if bool(cfg.get_setting("auto_continue_tool_calls", true)) and _auto_tool_round < int(cfg.get_setting("max_auto_tool_rounds", 4)):
+		_auto_tool_round += 1
+		_is_generating = true
+		_send_button.text = "Stop"
+		GoGentSingleton.get_instance().api_manager.send_chat_request(_build_request_messages())
+	else:
+		_auto_tool_round = 0
+
+func _extract_tool_calls(text: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var start := text.find("<gogent_tool>")
+	while start >= 0:
+		var content_start := start + "<gogent_tool>".length()
+		var end := text.find("</gogent_tool>", content_start)
+		if end < 0:
+			break
+		var payload := text.substr(content_start, end - content_start).strip_edges()
+		var parsed = JSON.parse_string(payload)
+		if parsed is Dictionary:
+			result.append(parsed)
+		start = text.find("<gogent_tool>", end + "</gogent_tool>".length())
+	return result
+
+func _save_conversation_message(role: String, content: String, meta: Dictionary = {}) -> void:
+	var manager = GoGentSingleton.get_instance().conversation_manager
+	if manager != null:
+		manager.add_message(role, content, meta)
+		_refresh_history()
+
+func _load_selected_history() -> void:
+	if _history_button == null or _history_button.get_item_count() == 0:
+		return
+	var manager = GoGentSingleton.get_instance().conversation_manager
+	if manager == null:
+		return
+	var id := str(_history_button.get_item_metadata(_history_button.selected))
+	if not manager.load_conversation(id):
+		return
+	_messages.clear()
+	for child in _message_list.get_children():
+		child.queue_free()
+	for item in manager.messages:
+		var role := str(item.get("role", ""))
+		var content := str(item.get("content", ""))
+		if role == "user":
+			_messages.append({"role": "user", "content": content})
+			_add_user_message(content)
+		elif role == "assistant":
+			_messages.append({"role": "assistant", "content": content})
+			_add_assistant_message(content, str(item.get("meta", {}).get("thinking", "")))
+		elif role == "tool":
+			_messages.append({"role": "user", "content": content})
+			_add_assistant_message("[color=#42ffc2]历史工具结果[/color]\n" + content)
+	_welcome.visible = _messages.is_empty()
+	_message_scroll.visible = not _messages.is_empty()
 
 func _add_user_message(text: String) -> void:
 	var item := _new_message_item()
@@ -819,6 +992,11 @@ func _save_settings() -> void:
 		singleton.config_manager.set_many({
 			"http_proxy_host": _settings_proxy_host.text.strip_edges(),
 			"http_proxy_port": int(_settings_proxy_port.value),
+			"language": _get_selected_language(),
+			"conversation_history_enabled": _settings_history_enabled.button_pressed,
+			"auto_apply_tool_calls": _settings_auto_apply_tools.button_pressed,
+			"auto_continue_tool_calls": _settings_auto_continue_tools.button_pressed,
+			"max_auto_tool_rounds": int(_settings_max_tool_rounds.value),
 			"default_temperature": float(_settings_temperature.value),
 			"default_top_p": float(_settings_top_p.value),
 			"default_max_tokens": int(_settings_max_tokens.value),
@@ -873,11 +1051,32 @@ func _add_model_from_settings() -> void:
 	_refresh_models()
 	GoGentSingleton.print_gogent_console("模型已添加。" if ok else "模型添加失败。", "success" if ok else "error")
 
+func _import_skill_zip() -> void:
+	var manager = GoGentSingleton.get_instance().skill_manager
+	if manager == null:
+		GoGentSingleton.print_gogent_console("Skill 管理器未就绪。", "error")
+		return
+	var result: Dictionary = manager.import_skill_zip(_settings_skill_zip_path.text.strip_edges())
+	GoGentSingleton.print_gogent_console(JSON.stringify(result), "success" if result.get("success", false) else "error")
+
 func _get_selected_provider_type() -> String:
 	if _settings_provider_type == null or _settings_provider_type.get_selected_id() < 0:
 		return "openai"
 	var meta = _settings_provider_type.get_item_metadata(_settings_provider_type.selected)
 	return str(meta)
+
+func _get_selected_language() -> String:
+	if _settings_language == null:
+		return "zh_CN"
+	return str(_settings_language.get_item_metadata(_settings_language.selected))
+
+func _select_language(language: String) -> void:
+	if _settings_language == null:
+		return
+	for i in range(_settings_language.get_item_count()):
+		if str(_settings_language.get_item_metadata(i)) == language:
+			_settings_language.select(i)
+			return
 
 func _select_provider_type(provider: String) -> void:
 	if _settings_provider_type == null:
@@ -886,6 +1085,29 @@ func _select_provider_type(provider: String) -> void:
 		if str(_settings_provider_type.get_item_metadata(i)) == provider:
 			_settings_provider_type.select(i)
 			return
+
+func _show_tutorial_if_needed() -> void:
+	var cfg = GoGentSingleton.get_instance().config_manager
+	if cfg == null or bool(cfg.get_setting("tutorial_seen", false)):
+		return
+	var dialog := AcceptDialog.new()
+	dialog.title = "GoGent 使用教程"
+	dialog.min_size = Vector2(620, 460)
+	var text := RichTextLabel.new()
+	text.bbcode_enabled = true
+	text.fit_content = true
+	text.text = "[b]欢迎使用 GoGent[/b]\n\n1. 在设置中选择语言、模型供应商、API Key、代理和 Claude/Codex 命令。\n2. 在对话页输入任务，AI 可以通过 <gogent_tool> 调用工具读取/写入项目文件。\n3. 在场景页可以创建场景、添加节点、设置属性和挂载脚本。\n4. 在训练页可以启动训练并记录人工反馈。\n5. 通过 Skill ZIP 可以导入新的技能模板。\n\n默认语言为中文；教程只会在第一次打开时显示。"
+	dialog.add_child(text)
+	add_child(dialog)
+	dialog.confirmed.connect(func():
+		cfg.set_setting("tutorial_seen", true)
+		dialog.queue_free()
+	)
+	dialog.canceled.connect(func():
+		cfg.set_setting("tutorial_seen", true)
+		dialog.queue_free()
+	)
+	dialog.popup_centered()
 
 func _check_external_tool(tool_id: String) -> void:
 	var manager = GoGentSingleton.get_instance().external_tool_manager

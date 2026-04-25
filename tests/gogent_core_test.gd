@@ -13,6 +13,8 @@ func _initialize() -> void:
 	ok = _test_openai_compatible_options() and ok
 	ok = _test_agents() and ok
 	ok = _test_skills() and ok
+	ok = _test_workspace_tools() and ok
+	ok = _test_conversation_history() and ok
 	ok = _test_console() and ok
 	ok = await _test_ui() and ok
 	ok = await _test_training() and ok
@@ -33,6 +35,8 @@ func _test_managers() -> bool:
 		and _assert(singleton.training_manager != null, "training manager") \
 		and _assert(singleton.external_tool_manager != null, "external tool manager") \
 		and _assert(singleton.node_editor_manager != null, "node editor manager") \
+		and _assert(singleton.conversation_manager != null, "conversation manager") \
+		and _assert(singleton.workspace_tool_manager != null, "workspace tool manager") \
 		and _assert(singleton.node_editor_manager.get_agent_tool_manifest().size() >= 8, "node editor tool manifest")
 
 func _test_models() -> bool:
@@ -105,7 +109,34 @@ func _test_agents() -> bool:
 func _test_skills() -> bool:
 	var manager = SingletonScript.get_instance().get("skill_manager")
 	var prompt = manager.render_skill_prompt("code_review", {"code_content": "extends Node"})
-	return _assert(manager.skills.size() >= 1, "default skills") and _assert(prompt.contains("extends Node"), "skill prompt render")
+	var import_result: Dictionary = manager.import_skill_zip("res://missing_skill.zip")
+	return _assert(manager.skills.size() >= 1, "default skills") \
+		and _assert(prompt.contains("extends Node"), "skill prompt render") \
+		and _assert(not import_result.get("success", true), "missing skill zip reports failure")
+
+func _test_workspace_tools() -> bool:
+	var manager = SingletonScript.get_instance().get("workspace_tool_manager")
+	var write_result: Dictionary = manager.write_file("res://addons/gogent/config/workspace_tool_test.tmp", "hello workspace")
+	var read_result: Dictionary = manager.read_file("res://addons/gogent/config/workspace_tool_test.tmp")
+	var search_result: Dictionary = manager.search_text("hello workspace", "res://addons/gogent/config", 10)
+	return _assert(write_result.get("success", false), "workspace write file") \
+		and _assert(read_result.get("content", "") == "hello workspace", "workspace read file") \
+		and _assert(search_result.get("matches", []).size() >= 1, "workspace search text")
+
+func _test_conversation_history() -> bool:
+	var manager = SingletonScript.get_instance().get("conversation_manager")
+	var id: String = manager.new_conversation("测试对话")
+	manager.add_message("user", "hello")
+	manager.add_message("assistant", "world")
+	var listed := false
+	for item in manager.list_conversations():
+		if item.get("id", "") == id:
+			listed = true
+			break
+	var loaded: bool = manager.load_conversation(id)
+	return _assert(listed, "conversation listed") \
+		and _assert(loaded, "conversation loaded") \
+		and _assert(manager.messages.size() == 2, "conversation messages")
 
 func _test_training() -> bool:
 	var manager = SingletonScript.get_instance().get("training_manager")
@@ -126,11 +157,15 @@ func _test_console() -> bool:
 	var feedback_status = console.execute_command("feedback [0,0,0,0] 1 1.25 [0,0,0,1] true console_test")
 	var ai_settings = console.execute_command("ai_settings")
 	var set_ai_option = console.execute_command("set_ai_option temperature 0.55")
+	var list_files = console.execute_command("list_files res://addons/gogent/core")
+	var read_file = console.execute_command("read_file res://project.godot")
 	return _assert(text.contains("Models:"), "console list_models") \
 		and _assert(external_status.contains("External tools:"), "console external_status") \
 		and _assert(feedback_status.contains("Human feedback recorded"), "console feedback") \
 		and _assert(ai_settings.contains("temperature"), "console ai_settings") \
-		and _assert(set_ai_option.contains("default_temperature"), "console set_ai_option")
+		and _assert(set_ai_option.contains("default_temperature"), "console set_ai_option") \
+		and _assert(list_files.contains("files"), "console list_files") \
+		and _assert(read_file.contains("config/name"), "console read_file")
 
 func _test_ui() -> bool:
 	var singleton = SingletonScript.get_instance()
