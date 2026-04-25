@@ -8,6 +8,9 @@ extends RefCounted
 
 signal scene_changed(message: String)
 
+# 错误检查历史记录（用于 get_recent_errors）
+var _error_check_history: Array[Dictionary] = []
+
 func get_editor_info() -> Dictionary:
 	var root := _get_current_root()
 	var selected: Array[String] = []
@@ -421,9 +424,6 @@ func _ensure_parent_dir(path: String) -> void:
 		DirAccess.make_dir_recursive_absolute(dir)
 
 # ---- 新增节点操作工具 ----
-
-# 错误检查历史记录（用于 get_recent_errors）
-var _error_check_history: Array[Dictionary] = []
 
 func rename_node(node_path: String, new_name: String, scene_path: String = "") -> Dictionary:
 	var open_result := _open_scene_if_needed(scene_path)
