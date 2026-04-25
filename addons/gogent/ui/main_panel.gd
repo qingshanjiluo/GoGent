@@ -27,6 +27,10 @@ var _settings_api_key: LineEdit
 var _settings_api_url: LineEdit
 var _settings_proxy_host: LineEdit
 var _settings_proxy_port: SpinBox
+var _settings_claude_command: LineEdit
+var _settings_claude_enabled: CheckButton
+var _settings_codex_command: LineEdit
+var _settings_codex_enabled: CheckButton
 
 var _messages: Array[Dictionary] = []
 var _is_generating := false
@@ -116,6 +120,14 @@ func _build_chat(parent: Control) -> Control:
 	collaborate_button.text = "Collaborate"
 	collaborate_button.pressed.connect(_collaborate)
 	model_row.add_child(collaborate_button)
+	var claude_button := Button.new()
+	claude_button.text = "Claude CLI"
+	claude_button.pressed.connect(func(): _send_external_prompt("claude"))
+	model_row.add_child(claude_button)
+	var codex_button := Button.new()
+	codex_button.text = "Codex CLI"
+	codex_button.pressed.connect(func(): _send_external_prompt("codex"))
+	model_row.add_child(codex_button)
 	_stream_toggle = CheckButton.new()
 	_stream_toggle.text = "Stream"
 	_stream_toggle.button_pressed = true
@@ -239,6 +251,28 @@ func _build_settings(parent: Control) -> Control:
 	_settings_proxy_port.step = 1
 	_settings_proxy_port.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	proxy_row.add_child(_settings_proxy_port)
+
+	var sep := HSeparator.new()
+	box.add_child(sep)
+	box.add_child(_label("External Agent Links"))
+	_settings_claude_enabled = CheckButton.new()
+	_settings_claude_enabled.text = "Enable Claude Code CLI"
+	box.add_child(_settings_claude_enabled)
+	_settings_claude_command = _line(box, "Claude Cmd")
+	var claude_check := Button.new()
+	claude_check.text = "Check Claude"
+	claude_check.pressed.connect(func(): _check_external_tool("claude"))
+	box.add_child(claude_check)
+
+	_settings_codex_enabled = CheckButton.new()
+	_settings_codex_enabled.text = "Enable Codex CLI"
+	box.add_child(_settings_codex_enabled)
+	_settings_codex_command = _line(box, "Codex Cmd")
+	var codex_check := Button.new()
+	codex_check.text = "Check Codex"
+	codex_check.pressed.connect(func(): _check_external_tool("codex"))
+	box.add_child(codex_check)
+
 	var save := Button.new()
 	save.text = "Save Settings"
 	save.pressed.connect(_save_settings)
@@ -310,6 +344,10 @@ func _load_settings() -> void:
 		_settings_proxy_host.text = str(cfg.get_setting("http_proxy_host", ""))
 		_settings_proxy_port.value = int(cfg.get_setting("http_proxy_port", 0))
 		_stream_toggle.button_pressed = bool(cfg.get_setting("stream_by_default", true))
+		_settings_claude_enabled.button_pressed = bool(cfg.get_setting("claude_enabled", true))
+		_settings_claude_command.text = str(cfg.get_setting("claude_command", "claude"))
+		_settings_codex_enabled.button_pressed = bool(cfg.get_setting("codex_enabled", true))
+		_settings_codex_command.text = str(cfg.get_setting("codex_command", "codex"))
 
 func _on_model_selected(index: int) -> void:
 	var meta: Dictionary = _model_button.get_item_metadata(index)
@@ -331,7 +369,11 @@ func _send_message() -> void:
 	_is_generating = true
 	_send_button.text = "Stop"
 	if _stream_toggle.button_pressed:
-		_start_stream_request()
+		var supplier = GoGentSingleton.get_instance().model_manager.get_current_supplier()
+		if supplier != null and supplier.provider == "anthropic":
+			GoGentSingleton.get_instance().api_manager.send_chat_request(_messages)
+		else:
+			_start_stream_request()
 	else:
 		GoGentSingleton.get_instance().api_manager.send_chat_request(_messages)
 
@@ -409,6 +451,23 @@ func _collaborate() -> void:
 	_welcome.visible = false
 	_message_scroll.visible = true
 	_user_input.text = ""
+
+func _send_external_prompt(tool_id: String) -> void:
+	var text := _user_input.text.strip_edges()
+	if text.is_empty():
+		return
+	var manager = GoGentSingleton.get_instance().external_tool_manager
+	if manager == null:
+		_add_assistant_message("[color=#ff7085]External tool manager is not ready.[/color]")
+		return
+	_user_input.text = ""
+	_welcome.visible = false
+	_message_scroll.visible = true
+	_add_user_message(text + " [%s]" % tool_id)
+	var result: Dictionary = manager.run_prompt(tool_id, text, "Godot project: %s" % ProjectSettings.globalize_path("res://"))
+	var prefix := "Claude Code" if tool_id == "claude" else "Codex"
+	var color := "#42ffc2" if result.get("success", false) else "#ff7085"
+	_add_assistant_message("[color=%s][b]%s[/b][/color]\n%s" % [color, prefix, result.get("output", "")])
 
 func _add_user_message(text: String) -> void:
 	var item := _new_message_item()
@@ -488,12 +547,30 @@ func _save_settings() -> void:
 		singleton.config_manager.set_many({
 			"http_proxy_host": _settings_proxy_host.text.strip_edges(),
 			"http_proxy_port": int(_settings_proxy_port.value),
-			"stream_by_default": _stream_toggle.button_pressed
+			"stream_by_default": _stream_toggle.button_pressed,
+			"claude_enabled": _settings_claude_enabled.button_pressed,
+			"claude_command": _settings_claude_command.text.strip_edges(),
+			"codex_enabled": _settings_codex_enabled.button_pressed,
+			"codex_command": _settings_codex_command.text.strip_edges()
 		})
 	if singleton.model_manager:
 		singleton.model_manager.set_current_credentials(_settings_api_key.text, _settings_api_url.text)
+	if singleton.external_tool_manager:
+		singleton.external_tool_manager.load_from_settings()
 	_refresh_models()
 	GoGentSingleton.print_gogent_console("Settings saved.", "success")
+
+func _check_external_tool(tool_id: String) -> void:
+	var manager = GoGentSingleton.get_instance().external_tool_manager
+	if manager == null:
+		GoGentSingleton.print_gogent_console("External tool manager is not ready.", "error")
+		return
+	if tool_id == "claude":
+		manager.save_tool("claude", _settings_claude_command.text, _settings_claude_enabled.button_pressed)
+	elif tool_id == "codex":
+		manager.save_tool("codex", _settings_codex_command.text, _settings_codex_enabled.button_pressed)
+	var status: Dictionary = manager.get_status(tool_id)
+	GoGentSingleton.print_gogent_console(status.get("message", "unknown"), "success" if status.get("available", false) else "warning")
 
 func _on_input_gui(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.is_echo():

@@ -95,6 +95,8 @@ func _init() -> void:
 	load_models()
 	if suppliers.is_empty():
 		add_default_suppliers()
+	else:
+		_ensure_builtin_suppliers()
 	_validate_current_selection()
 
 func _ensure_dir() -> void:
@@ -111,6 +113,10 @@ func add_default_suppliers() -> void:
 	var openai := _make_supplier("openai", "OpenAI", "https://api.openai.com", "openai")
 	_add_model(openai, "gpt-4o", "GPT-4o", 16384, false, true, true)
 	_add_model(openai, "gpt-4o-mini", "GPT-4o Mini", 16384, false, true, true)
+
+	var anthropic := _make_supplier("anthropic", "Anthropic Claude", "https://api.anthropic.com", "anthropic")
+	_add_model(anthropic, "claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", 8192, false, true, true)
+	_add_model(anthropic, "claude-3-5-haiku-latest", "Claude 3.5 Haiku", 8192, false, true, true)
 
 	var openrouter := _make_supplier("openrouter", "OpenRouter", "https://openrouter.ai/api", "openai")
 	_add_model(openrouter, "anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5", 65536, false, true, true)
@@ -135,6 +141,20 @@ func _add_model(supplier: SupplierInfo, model_name: String, display_name: String
 	model.supports_tools = tools
 	model.supports_vision = vision
 	supplier.models.append(model)
+
+func _ensure_builtin_suppliers() -> void:
+	var changed := false
+	if get_supplier("anthropic") == null:
+		var anthropic := _make_supplier("anthropic", "Anthropic Claude", "https://api.anthropic.com", "anthropic")
+		_add_model(anthropic, "claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", 8192, false, true, true)
+		_add_model(anthropic, "claude-3-5-haiku-latest", "Claude 3.5 Haiku", 8192, false, true, true)
+		changed = true
+	if get_supplier("openrouter") == null:
+		var openrouter := _make_supplier("openrouter", "OpenRouter", "https://openrouter.ai/api", "openai")
+		_add_model(openrouter, "anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5", 65536, false, true, true)
+		changed = true
+	if changed:
+		save_models()
 
 func load_models() -> void:
 	if not FileAccess.file_exists(MODELS_FILE):

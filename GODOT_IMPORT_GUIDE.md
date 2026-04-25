@@ -21,6 +21,8 @@ Open the `Settings` tab in the GoGent dock:
 - `API Key`: provider key, if required.
 - `Base URL`: provider endpoint, for example `https://api.deepseek.com`, `https://api.openai.com`, `https://openrouter.ai/api`, or `http://localhost:11434`.
 - `Proxy Host` and `Proxy Port`: optional HTTP/HTTPS proxy settings.
+- `Claude Cmd`: command or full path for Claude Code CLI.
+- `Codex Cmd`: command or full path for Codex CLI.
 
 Click `Save Settings`. Configuration is stored locally under `addons/gogent/config/` and is ignored by Git.
 
@@ -32,6 +34,7 @@ Use the `Console` tab:
 help
 list_models
 list_agents
+external_status
 train 3
 ```
 
@@ -46,4 +49,6 @@ api_test
 - If the dock does not appear, confirm `addons/gogent/plugin.cfg` exists and the plugin is enabled.
 - If API calls fail, check the current model selection, API key, base URL, and proxy settings.
 - If streaming does not show chunks, verify the selected provider supports OpenAI-compatible SSE responses.
+- Direct Anthropic Claude chat uses the Anthropic Messages API. If streaming is enabled, GoGent automatically falls back to the regular request path for Anthropic models.
+- If `claude` or `codex` is not found, install the relevant CLI or set the full command path in `Settings`.
 - If tests scan unrelated local reference projects, place a `.gdignore` file inside that reference folder.

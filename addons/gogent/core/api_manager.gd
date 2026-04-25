@@ -45,6 +45,8 @@ func send_stream_chat_request(messages: Array[Dictionary], options: Dictionary =
 	var context := _build_request_context(messages, options, true)
 	if context.is_empty():
 		return -1
+	if context.get("provider", "openai") == "anthropic":
+		return -1
 	return stream_manager.send_stream_request(context)
 
 func cancel_request() -> void:
@@ -64,40 +66,75 @@ func _build_request_context(messages: Array[Dictionary], options: Dictionary, st
 	if supplier == null or model == null:
 		return {}
 	var selected_model := str(options.get("model", model.model_name))
-	var body_data := {
-		"model": selected_model,
-		"messages": messages,
-		"temperature": float(options.get("temperature", singleton.config_manager.get_setting("default_temperature", 0.7) if singleton.config_manager else 0.7)),
-		"max_tokens": int(options.get("max_tokens", model.max_tokens)),
-		"stream": stream
-	}
+	var provider := str(supplier.provider)
+	var body_data := _build_provider_body(provider, messages, selected_model, int(options.get("max_tokens", model.max_tokens)), float(options.get("temperature", singleton.config_manager.get_setting("default_temperature", 0.7) if singleton.config_manager else 0.7)), stream)
 	if options.has("top_p"):
 		body_data["top_p"] = options["top_p"]
-	if options.has("tools") and model.supports_tools:
+	if provider != "anthropic" and options.has("tools") and model.supports_tools:
 		body_data["tools"] = options["tools"]
 		body_data["tool_choice"] = options.get("tool_choice", "auto")
-	if model.supports_thinking or options.get("supports_thinking", false):
+	if provider != "anthropic" and (model.supports_thinking or options.get("supports_thinking", false)):
 		body_data["include_reasoning"] = true
 	var headers := PackedStringArray([
 		"Accept: text/event-stream" if stream else "Accept: application/json",
 		"Content-Type: application/json"
 	])
-	if not supplier.api_key.strip_edges().is_empty():
+	if provider == "anthropic":
+		headers.append("anthropic-version: 2023-06-01")
+		if not supplier.api_key.strip_edges().is_empty():
+			headers.append("x-api-key: %s" % supplier.api_key.strip_edges())
+	elif not supplier.api_key.strip_edges().is_empty():
 		headers.append("Authorization: Bearer %s" % supplier.api_key.strip_edges())
 	return {
-		"url": _chat_url(supplier.base_url),
+		"url": _chat_url(supplier.base_url, provider),
 		"headers": headers,
 		"body": JSON.stringify(body_data),
 		"supplier": supplier.to_dict(),
+		"provider": provider,
 		"proxy": _proxy_settings()
 	}
 
-func _chat_url(base_url: String) -> String:
+func _build_provider_body(provider: String, messages: Array[Dictionary], model_name: String, max_tokens: int, temperature: float, stream: bool) -> Dictionary:
+	if provider == "anthropic":
+		var system_parts: Array[String] = []
+		var anthropic_messages: Array[Dictionary] = []
+		for item in messages:
+			var role := str(item.get("role", "user"))
+			var content := str(item.get("content", ""))
+			if role == "system":
+				system_parts.append(content)
+			else:
+				anthropic_messages.append({"role": "assistant" if role == "assistant" else "user", "content": content})
+		var body := {
+			"model": model_name,
+			"messages": anthropic_messages,
+			"max_tokens": max_tokens,
+			"temperature": temperature,
+			"stream": stream
+		}
+		if not system_parts.is_empty():
+			body["system"] = "\n\n".join(system_parts)
+		return body
+	return {
+		"model": model_name,
+		"messages": messages,
+		"temperature": temperature,
+		"max_tokens": max_tokens,
+		"stream": stream
+	}
+
+func _chat_url(base_url: String, provider: String = "openai") -> String:
 	var url := base_url.strip_edges()
 	if url.is_empty():
-		url = "https://api.openai.com"
+		url = "https://api.anthropic.com" if provider == "anthropic" else "https://api.openai.com"
 	if url.ends_with("/"):
 		url = url.substr(0, url.length() - 1)
+	if provider == "anthropic":
+		if url.ends_with("/v1/messages"):
+			return url
+		if url.ends_with("/v1"):
+			return url + "/messages"
+		return url + "/v1/messages"
 	if url.ends_with("/chat/completions"):
 		return url
 	if url.ends_with("/v1") or url.ends_with("/v3"):
@@ -135,6 +172,13 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		var error = parsed["error"]
 		var message := str(error.get("message", error)) if error is Dictionary else str(error)
 		request_completed.emit(false, message, "")
+		return
+	if parsed.has("content") and parsed["content"] is Array:
+		var content_parts: Array[String] = []
+		for part in parsed["content"]:
+			if part is Dictionary and part.get("type", "") == "text":
+				content_parts.append(str(part.get("text", "")))
+		request_completed.emit(true, "\n".join(content_parts), "")
 		return
 	var choices: Array = parsed.get("choices", [])
 	if choices.is_empty():

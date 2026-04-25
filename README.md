@@ -5,6 +5,8 @@ GoGent is a Godot 4 editor plugin for AI assisted game development. It adds an e
 ## Features
 
 - Multi-provider model configuration for OpenAI-compatible APIs, DeepSeek, OpenRouter, and Ollama.
+- Direct Anthropic Claude API support in addition to Claude models through OpenRouter.
+- Local Claude Code and Codex CLI bridges for handing a prompt from Godot to external coding agents.
 - Chat panel with regular and Server-Sent Events streaming requests.
 - Agent system with editable role, system prompt, temperature, max tokens, enabled state, and assigned skills.
 - Skill prompt manager for code review, game testing, AI training, game design, deep analysis, and project scaffolding.
@@ -33,10 +35,22 @@ list_models
 select_model 0 0
 list_agents
 api_test
+external_status
+claude review the current Godot scene structure
+codex inspect this project and suggest tests
 train 100
 stop_train
 run_test res://path/to/scene.tscn
 ```
+
+## Claude And Codex Links
+
+GoGent supports Claude and Codex in two ways:
+
+- `Anthropic Claude` appears as a model provider. Add an Anthropic API key in `Settings`, select a Claude model in the chat model picker, and send normal chat requests.
+- `Claude Code CLI` and `Codex CLI` can be configured in `Settings`. The defaults are `claude -p {prompt}` and `codex exec {prompt}`. Use `Check Claude`, `Check Codex`, or the `external_status` console command to verify availability.
+
+The CLI bridge sends the current Godot project path as context. If your tools are installed outside `PATH`, set the full executable path in `Settings`.
 
 ## Testing
 

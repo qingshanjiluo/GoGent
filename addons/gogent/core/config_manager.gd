@@ -14,7 +14,13 @@ var settings: Dictionary = {
 	"default_max_tokens": 8192,
 	"stream_by_default": true,
 	"training_episodes": 100,
-	"training_save_interval": 100
+	"training_save_interval": 100,
+	"claude_enabled": true,
+	"claude_command": "claude",
+	"claude_prompt_args": ["-p", "{prompt}"],
+	"codex_enabled": true,
+	"codex_command": "codex",
+	"codex_prompt_args": ["exec", "{prompt}"]
 }
 
 func _init() -> void:

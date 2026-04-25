@@ -9,6 +9,7 @@ func _initialize() -> void:
 	var ok := true
 	ok = _test_managers() and ok
 	ok = _test_models() and ok
+	ok = _test_anthropic_request_context() and ok
 	ok = _test_agents() and ok
 	ok = _test_skills() and ok
 	ok = _test_console() and ok
@@ -28,13 +29,35 @@ func _test_managers() -> bool:
 		and _assert(singleton.agent_manager != null, "agent manager") \
 		and _assert(singleton.api_manager != null, "api manager") \
 		and _assert(singleton.skill_manager != null, "skill manager") \
-		and _assert(singleton.training_manager != null, "training manager")
+		and _assert(singleton.training_manager != null, "training manager") \
+		and _assert(singleton.external_tool_manager != null, "external tool manager")
 
 func _test_models() -> bool:
 	var manager = SingletonScript.get_instance().get("model_manager")
 	return _assert(manager.suppliers.size() >= 1, "default suppliers") \
 		and _assert(manager.get_current_supplier() != null, "current supplier") \
-		and _assert(manager.get_current_model() != null, "current model")
+		and _assert(manager.get_current_model() != null, "current model") \
+		and _assert(manager.get_supplier("anthropic") != null, "anthropic claude supplier")
+
+func _test_anthropic_request_context() -> bool:
+	var singleton = SingletonScript.get_instance()
+	var model_manager = singleton.get("model_manager")
+	var api = singleton.get("api_manager")
+	var original_supplier = model_manager.current_supplier_id
+	var original_model = model_manager.current_model_id
+	var anthropic = model_manager.get_supplier("anthropic")
+	if not _assert(anthropic != null and not anthropic.models.is_empty(), "anthropic models"):
+		return false
+	model_manager.set_current_model(anthropic.id, anthropic.models[0].id)
+	var messages: Array[Dictionary] = [
+		{"role": "system", "content": "system text"},
+		{"role": "user", "content": "hello"}
+	]
+	var context: Dictionary = api._build_request_context(messages, {}, false)
+	model_manager.set_current_model(original_supplier, original_model)
+	var body = JSON.parse_string(context.get("body", "{}"))
+	return _assert(context.get("url", "").ends_with("/v1/messages"), "anthropic endpoint") \
+		and _assert(body is Dictionary and body.get("system", "") == "system text", "anthropic system field")
 
 func _test_agents() -> bool:
 	var manager = SingletonScript.get_instance().get("agent_manager")
@@ -61,7 +84,8 @@ func _test_training() -> bool:
 func _test_console() -> bool:
 	var console = SingletonScript.get_instance().get("console_manager")
 	var text = console.execute_command("list_models")
-	return _assert(text.contains("Models:"), "console list_models")
+	var external_status = console.execute_command("external_status")
+	return _assert(text.contains("Models:"), "console list_models") and _assert(external_status.contains("External tools:"), "console external_status")
 
 func _test_ui() -> bool:
 	var singleton = SingletonScript.get_instance()

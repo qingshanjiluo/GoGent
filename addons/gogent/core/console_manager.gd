@@ -73,6 +73,9 @@ func _register_default_commands() -> void:
 	register_command("list_models", "List model providers and models.", _cmd_list_models)
 	register_command("select_model", "Select a model by provider/model index.", _cmd_select_model, ["supplier_index", "model_index"])
 	register_command("api_test", "Send a short API request.", _cmd_api_test)
+	register_command("external_status", "Check Claude Code and Codex CLI availability.", _cmd_external_status)
+	register_command("claude", "Send a prompt to Claude Code CLI.", _cmd_claude, ["prompt"])
+	register_command("codex", "Send a prompt to Codex CLI.", _cmd_codex, ["prompt"])
 	register_command("train", "Start simulated RL training.", _cmd_train, ["episodes"])
 	register_command("stop_train", "Stop training.", _cmd_stop_train)
 	register_command("run_test", "Run a scene in the editor.", _cmd_run_test, ["scene_path"])
@@ -144,6 +147,32 @@ func _cmd_api_test(_args: Array[String]) -> String:
 		{"role": "user", "content": "health check"}
 	])
 	return "API test request sent."
+
+func _cmd_external_status(_args: Array[String]) -> String:
+	var manager = GoGentSingleton.get_instance().external_tool_manager
+	if manager == null:
+		return "External tool manager is not ready."
+	var status: Dictionary = manager.get_all_status()
+	var text := "External tools:\n"
+	for tool_id in status.keys():
+		var item: Dictionary = status[tool_id]
+		text += "  %s: %s\n" % [tool_id, item.get("message", "unknown")]
+	return text
+
+func _cmd_claude(args: Array[String]) -> String:
+	return _run_external_prompt("claude", args)
+
+func _cmd_codex(args: Array[String]) -> String:
+	return _run_external_prompt("codex", args)
+
+func _run_external_prompt(tool_id: String, args: Array[String]) -> String:
+	if args.is_empty():
+		return "Usage: %s <prompt>" % tool_id
+	var manager = GoGentSingleton.get_instance().external_tool_manager
+	if manager == null:
+		return "External tool manager is not ready."
+	var result: Dictionary = manager.run_prompt(tool_id, " ".join(args), "Godot project: %s" % ProjectSettings.globalize_path("res://"))
+	return result.get("output", "")
 
 func _cmd_train(args: Array[String]) -> String:
 	var episodes := 100
