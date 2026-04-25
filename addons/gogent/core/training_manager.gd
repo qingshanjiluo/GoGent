@@ -8,6 +8,8 @@ signal training_completed(stats: Dictionary)
 signal training_error(error_msg: String)
 signal human_feedback_recorded(action: int, reward: float, note: String)
 signal training_ai_adjusted(params: Dictionary)  # AI 自动调整参数后发出
+signal training_scene_changed(scene_path: String)  # 训练场景变更
+signal training_node_changed(node_path: String)    # 训练节点变更
 
 enum TrainingState { IDLE, RUNNING, PAUSED, COMPLETED, ERROR }
 
@@ -28,6 +30,9 @@ class TrainingConfig:
 	var ai_tuning_enabled := false       # 是否启用 AI 自动调参
 	var ai_tuning_interval := 10         # 每 N 个 episode 调一次
 	var ai_tuning_prompt := ""           # 自定义调参提示词（可选）
+	# 场景/节点选择配置
+	var target_scene := ""               # 训练目标场景路径（如 res://scenes/game.tscn）
+	var target_node := ""                # 训练目标节点路径（如 "Player/AIController"）
 
 	func to_dict() -> Dictionary:
 		return {
@@ -45,7 +50,9 @@ class TrainingConfig:
 			"model_path": model_path,
 			"ai_tuning_enabled": ai_tuning_enabled,
 			"ai_tuning_interval": ai_tuning_interval,
-			"ai_tuning_prompt": ai_tuning_prompt
+			"ai_tuning_prompt": ai_tuning_prompt,
+			"target_scene": target_scene,
+			"target_node": target_node
 		}
 
 class TrainingStats:
@@ -97,6 +104,7 @@ var stats := TrainingStats.new()
 var replay_buffer := ReplayBuffer.new()
 var visualizer := GoGentTrainingVisualizer.new()
 var human_feedback: Array[Dictionary] = []
+var ai_tuning_history: Array[Dictionary] = []  # AI 调参历史记录
 var _q_table: Dictionary = {}
 var _run_token := 0
 
@@ -226,6 +234,12 @@ func _apply_config(values: Dictionary) -> void:
 				config.ai_tuning_interval = max(1, int(values[key]))
 			"ai_tuning_prompt":
 				config.ai_tuning_prompt = str(values[key])
+			"target_scene":
+				config.target_scene = str(values[key])
+				training_scene_changed.emit(config.target_scene)
+			"target_node":
+				config.target_node = str(values[key])
+				training_node_changed.emit(config.target_node)
 
 func _run_training_loop(token: int) -> void:
 	while token == _run_token and state == TrainingState.RUNNING and stats.episode < config.episodes:
@@ -461,4 +475,21 @@ func _apply_ai_tuning(ai_response: Dictionary) -> void:
 		if not reasoning.is_empty():
 			msg += "\n理由: %s" % reasoning
 		GoGentSingleton.print_gogent_console(msg, "success")
+		# 记录调参历史
+		var history_entry := {
+			"episode": stats.episode,
+			"timestamp": Time.get_unix_time_from_system(),
+			"changed_params": changed.duplicate(),
+			"analysis": analysis,
+			"reasoning": reasoning,
+			"stats_snapshot": {
+				"avg_reward": stats.avg_reward,
+				"max_reward": stats.max_reward,
+				"min_reward": stats.min_reward,
+				"epsilon": stats.epsilon,
+				"q_table_size": _q_table.size(),
+				"replay_buffer_size": replay_buffer.size()
+			}
+		}
+		ai_tuning_history.append(history_entry)
 		training_ai_adjusted.emit(changed)

@@ -34,6 +34,9 @@ var _training_progress: ProgressBar
 var _training_episode: Label
 var _training_reward: Label
 var _training_epsilon: Label
+var _training_scene_path: LineEdit
+var _training_node_path: LineEdit
+var _training_ai_history: RichTextLabel
 var _feedback_state: LineEdit
 var _feedback_next_state: LineEdit
 var _feedback_action: SpinBox
@@ -306,9 +309,14 @@ func _build_scene(parent: Control) -> Control:
 	return box
 
 func _build_training(parent: Control) -> Control:
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	parent.add_child(scroll)
 	var box := VBoxContainer.new()
-	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	parent.add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
+
+	# 状态显示
 	_training_status = _label("Idle")
 	_training_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(_training_status)
@@ -320,9 +328,14 @@ func _build_training(parent: Control) -> Control:
 	box.add_child(_training_episode)
 	box.add_child(_training_reward)
 	box.add_child(_training_epsilon)
+
+	# 训练图表
 	_chart_holder = PanelContainer.new()
 	_chart_holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_chart_holder.custom_minimum_size.y = 180
 	box.add_child(_chart_holder)
+
+	# 控制按钮
 	var buttons := HBoxContainer.new()
 	box.add_child(buttons)
 	var start_button := Button.new()
@@ -342,17 +355,56 @@ func _build_training(parent: Control) -> Control:
 	stop_button.pressed.connect(func(): GoGentSingleton.get_instance().training_manager.stop_training())
 	buttons.add_child(stop_button)
 
-	# AI 自动调参配置
+	box.add_child(HSeparator.new())
+
+	# ── 场景/节点选择 ──
+	var scene_section := _label("训练目标")
+	scene_section.add_theme_font_size_override("font_size", 14)
+	box.add_child(scene_section)
+
+	var scene_row := HBoxContainer.new()
+	box.add_child(scene_row)
+	scene_row.add_child(_label("场景"))
+	_training_scene_path = LineEdit.new()
+	_training_scene_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_training_scene_path.placeholder_text = "res://scenes/game.tscn（可选）"
+	_training_scene_path.text_changed.connect(func(text: String):
+		GoGentSingleton.get_instance().training_manager.config.target_scene = text
+	)
+	scene_row.add_child(_training_scene_path)
+	var browse_scene_btn := Button.new()
+	browse_scene_btn.text = "浏览"
+	browse_scene_btn.pressed.connect(_browse_training_scene)
+	scene_row.add_child(browse_scene_btn)
+
+	var node_row := HBoxContainer.new()
+	box.add_child(node_row)
+	node_row.add_child(_label("节点"))
+	_training_node_path = LineEdit.new()
+	_training_node_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_training_node_path.placeholder_text = "Player/AIController（可选）"
+	_training_node_path.text_changed.connect(func(text: String):
+		GoGentSingleton.get_instance().training_manager.config.target_node = text
+	)
+	node_row.add_child(_training_node_path)
+
+	box.add_child(HSeparator.new())
+
+	# ── AI 自动调参配置 ──
+	var ai_title := _label("AI 自动调参")
+	ai_title.add_theme_font_size_override("font_size", 14)
+	box.add_child(ai_title)
+
 	var ai_tuning_row := HBoxContainer.new()
 	box.add_child(ai_tuning_row)
 	var ai_tuning_toggle := CheckButton.new()
-	ai_tuning_toggle.text = "AI 自动调参"
+	ai_tuning_toggle.text = "启用 AI 调参"
 	ai_tuning_toggle.button_pressed = false
 	ai_tuning_toggle.toggled.connect(func(enabled: bool):
 		GoGentSingleton.get_instance().training_manager.config.ai_tuning_enabled = enabled
 	)
 	ai_tuning_row.add_child(ai_tuning_toggle)
-	ai_tuning_row.add_child(_label("调参间隔"))
+	ai_tuning_row.add_child(_label("间隔"))
 	var ai_tuning_interval := SpinBox.new()
 	ai_tuning_interval.min_value = 1
 	ai_tuning_interval.max_value = 100
@@ -362,8 +414,24 @@ func _build_training(parent: Control) -> Control:
 		GoGentSingleton.get_instance().training_manager.config.ai_tuning_interval = int(val)
 	)
 	ai_tuning_row.add_child(ai_tuning_interval)
+	ai_tuning_row.add_child(_label("episode"))
 
+	# AI 调参历史
+	var ai_history_title := _label("调参历史")
+	box.add_child(ai_history_title)
+	_training_ai_history = RichTextLabel.new()
+	_training_ai_history.bbcode_enabled = true
+	_training_ai_history.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_training_ai_history.custom_minimum_size.y = 80
+	_training_ai_history.scroll_active = true
+	_training_ai_history.text = "暂无调参记录"
+	box.add_child(_training_ai_history)
+
+	box.add_child(HSeparator.new())
+
+	# ── 人工反馈 ──
 	var feedback_title := _label("人工反馈")
+	feedback_title.add_theme_font_size_override("font_size", 14)
 	box.add_child(feedback_title)
 	_feedback_state = _line(box, "状态")
 	_feedback_state.text = "[0,0,0,0]"
@@ -392,7 +460,7 @@ func _build_training(parent: Control) -> Control:
 	feedback_button.text = "记录人工反馈"
 	feedback_button.pressed.connect(_record_human_feedback)
 	box.add_child(feedback_button)
-	return box
+	return scroll
 
 func _build_agents(parent: Control) -> Control:
 	var panel := AGENT_EDITOR_SCENE.instantiate()
@@ -1009,6 +1077,7 @@ func _execute_single_tool(call: Dictionary, workspace_tools, node_editor) -> Dic
 
 func _extract_tool_calls(text: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
+	# 1. 先尝试解析 <gogent_tool> 标签格式
 	var start := text.find("<gogent_tool>")
 	while start >= 0:
 		var content_start := start + "<gogent_tool>".length()
@@ -1020,6 +1089,32 @@ func _extract_tool_calls(text: String) -> Array[Dictionary]:
 		if parsed is Dictionary:
 			result.append(parsed)
 		start = text.find("<gogent_tool>", end + "</gogent_tool>".length())
+	# 2. 如果没有找到标签格式，尝试解析裸 JSON 工具调用
+	#    匹配 {"tool":"...","args":{...}} 或 {"name":"...","arguments":{...}} 格式
+	if result.is_empty():
+		var json_start := text.find("{\"tool\"")
+		if json_start < 0:
+			json_start = text.find("{\"name\"")
+		if json_start >= 0:
+			# 尝试找到 JSON 结束位置（通过大括号匹配）
+			var brace_count := 0
+			var json_end := -1
+			for i in range(json_start, text.length()):
+				var ch := text[i]
+				if ch == "{":
+					brace_count += 1
+				elif ch == "}":
+					brace_count -= 1
+					if brace_count == 0:
+						json_end = i + 1
+						break
+			if json_end > json_start:
+				var payload := text.substr(json_start, json_end - json_start).strip_edges()
+				var parsed = JSON.parse_string(payload)
+				if parsed is Dictionary:
+					var tool_name := str(parsed.get("tool", parsed.get("name", "")))
+					if not tool_name.is_empty():
+						result.append(parsed)
 	return result
 
 func _save_conversation_message(role: String, content: String, meta: Dictionary = {}) -> void:
@@ -1189,6 +1284,37 @@ func _on_training_ai_adjusted(params: Dictionary) -> void:
 		parts.append("%s=%.6f" % [key, float(params[key])])
 	_training_status.text = "AI 调参: " + ", ".join(parts)
 	GoGentSingleton.print_gogent_console("AI 自动调参: " + JSON.stringify(params), "success")
+	# 更新调参历史显示
+	_refresh_ai_tuning_history()
+
+func _refresh_ai_tuning_history() -> void:
+	var manager = GoGentSingleton.get_instance().training_manager
+	if manager == null:
+		return
+	var history = manager.ai_tuning_history
+	if history.is_empty():
+		_training_ai_history.text = "暂无调参记录"
+		return
+	var lines := PackedStringArray()
+	# 只显示最近 10 条
+	var start := max(0, history.size() - 10)
+	for i in range(start, history.size()):
+		var entry = history[i]
+		var episode := int(entry.get("episode", 0))
+		var changed := entry.get("changed_params", {})
+		var analysis := str(entry.get("analysis", ""))
+		var parts := PackedStringArray()
+		for key in changed.keys():
+			var val = changed[key]
+			if val is float:
+				parts.append("%s=%.4f" % [key, val])
+			else:
+				parts.append("%s=%s" % [key, str(val)])
+		var line := "[b]Episode %d[/b]: %s" % [episode, ", ".join(parts)]
+		if not analysis.is_empty():
+			line += "\n  [color=#abc9ff]%s[/color]" % analysis
+		lines.append(line)
+	_training_ai_history.text = "\n".join(lines)
 
 func _parse_json_array(text: String) -> Array:
 	var parsed = JSON.parse_string(text.strip_edges())
