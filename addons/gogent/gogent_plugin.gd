@@ -10,6 +10,10 @@ const CONFIG_DIR: String = "res://addons/gogent/config/"
 
 # 预加载主面板
 const MAIN_PANEL = preload("res://addons/gogent/ui/main_panel.tscn")
+const AGENT_EDITOR_PANEL = preload("res://addons/gogent/ui/agent_editor/agent_editor_panel.tscn")
+
+# 调试覆盖层实例
+var _debug_overlay: GoGentDebugOverlay = null
 
 func _enable_plugin() -> void:
 	pass
@@ -35,6 +39,13 @@ func _enter_tree() -> void:
 	# 加载配置
 	await _load_configs()
 	
+	# 初始化调试覆盖层（仅在运行游戏时激活）
+	_init_debug_overlay()
+	
+	# 连接场景切换信号，用于管理调试覆盖层
+	if get_tree():
+		get_tree().tree_changed.connect(_on_tree_changed)
+	
 	print_rich("[color='#42ffc2']=== GoGent 插件初始化完成！ ===[/color]")
 	print_rich("[color='#abc9ff']GoGent - 让 Godot 开发更智能[/color]")
 
@@ -46,6 +57,9 @@ func _exit_tree() -> void:
 		remove_control_from_docks(main_panel)
 		main_panel.queue_free()
 	
+	# 清理调试覆盖层
+	_remove_debug_overlay()
+	
 	singleton.set_main_panel(null)
 	singleton.set_editor_plugin(null)
 
@@ -56,6 +70,35 @@ func _init_config_dir() -> void:
 func _load_configs() -> void:
 	# 延迟加载各模块
 	GoGentSingleton.get_instance().load_all_configs()
+
+# ========== 调试覆盖层 ==========
+
+func _init_debug_overlay() -> void:
+	"""初始化游戏内调试覆盖层"""
+	if _debug_overlay != null:
+		return
+	
+	_debug_overlay = GoGentDebugOverlay.new()
+	_debug_overlay.name = "GoGentDebugOverlay"
+	
+	# 添加到场景树（如果存在）
+	var scene_tree = get_tree()
+	if scene_tree:
+		var root = scene_tree.root
+		if root:
+			root.add_child.call_deferred(_debug_overlay)
+			GoGentSingleton.print_gogent_console("调试覆盖层已初始化（按 F3 切换）", "info")
+
+func _remove_debug_overlay() -> void:
+	"""移除调试覆盖层"""
+	if _debug_overlay and is_instance_valid(_debug_overlay):
+		_debug_overlay.queue_free()
+		_debug_overlay = null
+
+func _on_tree_changed() -> void:
+	"""场景树变化时，确保调试覆盖层存在"""
+	if _debug_overlay == null or not is_instance_valid(_debug_overlay):
+		_init_debug_overlay()
 
 # ========== 工具函数 ==========
 

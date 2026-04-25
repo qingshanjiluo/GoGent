@@ -4,19 +4,33 @@ extends RefCounted
 
 ## API 管理器
 ## 管理所有 AI API 的调用（OpenAI 兼容接口、Claude、Gemini 等）
-## 参考 AlphaAgent 的 OpenAIChat 和 Microverse 的 APIManager
+## 支持流式 (SSE) 和非流式请求
 
 # 信号
 signal request_completed(success: bool, response: String, thinking: String)
+signal stream_chunk(chunk: String, request_id: int)
+signal stream_thinking_chunk(chunk: String, request_id: int)
+signal stream_completed(success: bool, full_response: String, thinking: String, request_id: int)
 
 # 当前 HTTP 请求
 var http_request: HTTPRequest = null
 var is_generating: bool = false
 
-func _init() -> void:
-	pass
+# 流式管理器
+var stream_manager: GoGentStreamManager = null
 
-## 发送聊天请求
+func _init() -> void:
+	stream_manager = GoGentStreamManager.new()
+	_connect_stream_signals()
+
+func _connect_stream_signals() -> void:
+	if stream_manager:
+		stream_manager.stream_chunk.connect(_on_stream_chunk)
+		stream_manager.stream_thinking_chunk.connect(_on_stream_thinking_chunk)
+		stream_manager.stream_completed.connect(_on_stream_completed)
+		stream_manager.stream_error.connect(_on_stream_error)
+
+## 发送聊天请求（非流式）
 func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> void:
 	var singleton = GoGentSingleton.get_instance()
 	var model_manager = singleton.model_manager
@@ -36,9 +50,6 @@ func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) ->
 		http_request = HTTPRequest.new()
 		if singleton.main_panel:
 			singleton.main_panel.add_child(http_request)
-	
-	# 应用代理设置
-	_apply_proxy_settings()
 	
 	# 准备请求头
 	var headers = [
@@ -86,12 +97,29 @@ func send_chat_request(messages: Array[Dictionary], options: Dictionary = {}) ->
 		is_generating = false
 		request_completed.emit(false, "", "")
 
-## 发送流式聊天请求（用于实时对话）
-func send_stream_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> void:
-	# TODO: 实现 SSE 流式请求
-	send_chat_request(messages, options)
+## 发送流式聊天请求（SSE 实时响应）
+func send_stream_chat_request(messages: Array[Dictionary], options: Dictionary = {}) -> int:
+	if stream_manager == null:
+		push_error("流式管理器未初始化")
+		return -1
+	
+	return stream_manager.send_stream_request(messages, options)
 
-## 处理请求完成
+## 处理流式数据块
+func _on_stream_chunk(chunk: String, request_id: int) -> void:
+	stream_chunk.emit(chunk, request_id)
+
+func _on_stream_thinking_chunk(chunk: String, request_id: int) -> void:
+	stream_thinking_chunk.emit(chunk, request_id)
+
+func _on_stream_completed(full_response: String, thinking: String, request_id: int) -> void:
+	stream_completed.emit(true, full_response, thinking, request_id)
+
+func _on_stream_error(error_msg: String, request_id: int) -> void:
+	push_error("流式请求错误: " + error_msg)
+	stream_completed.emit(false, "", "", request_id)
+
+## 处理非流式请求完成
 func _on_request_completed(_result, _response_code, _headers, body: PackedByteArray) -> void:
 	is_generating = false
 	
@@ -127,21 +155,10 @@ func cancel_request() -> void:
 	if http_request and is_generating:
 		http_request.cancel_request()
 		is_generating = false
-
-## 应用代理设置
-func _apply_proxy_settings() -> void:
-	if http_request == null:
-		return
 	
-	var singleton = GoGentSingleton.get_instance()
-	if singleton.config_manager:
-		var proxy_host = singleton.config_manager.get_setting("http_proxy_host", "")
-		var proxy_port = singleton.config_manager.get_setting("http_proxy_port", "")
-		
-		if proxy_host != "" and proxy_port != "":
-			# Godot 的 HTTPRequest 不支持直接设置代理
-			# 这里留作扩展，可以通过环境变量等方式实现
-			pass
+	# 取消所有流式请求
+	if stream_manager:
+		stream_manager.cancel_all_streams()
 
 ## 构建消息
 static func build_message(role: String, content: String) -> Dictionary:

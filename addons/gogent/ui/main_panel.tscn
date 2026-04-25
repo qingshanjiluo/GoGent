@@ -47,6 +47,13 @@ size_flags_horizontal = 3
 toggle_mode = true
 text = "🧠 训练"
 
+[node name="TabAgentEditor" type="Button" parent="VBoxContainer/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "🤖 Agent"
+
 [node name="TabSettings" type="Button" parent="VBoxContainer/TopBar"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -85,6 +92,12 @@ text = "新建"
 unique_name_in_owner = true
 layout_mode = 2
 text = "🤝 协作"
+
+[node name="StreamToggle" type="CheckButton" parent="VBoxContainer/ChatContainer/ModelBar"]
+unique_name_in_owner = true
+layout_mode = 2
+button_pressed = true
+text = "流式"
 
 [node name="WelcomeMessage" type="Control" parent="VBoxContainer/ChatContainer"]
 unique_name_in_owner = true
@@ -229,6 +242,26 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "探索率: 1.000"
 
+[node name="ChartContainer" type="MarginContainer" parent="VBoxContainer/TrainingContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/margin_left = 4
+theme_override_constants/margin_right = 4
+
+[node name="ChartPanel" type="PanelContainer" parent="VBoxContainer/TrainingContainer/ChartContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ChartPlaceholder" type="Label" parent="VBoxContainer/TrainingContainer/ChartContainer/ChartPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_horizontal = 3
+text = "训练图表将在此显示\n开始训练后自动更新"
+horizontal_alignment = 1
+vertical_alignment = 1
+
 [node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/TrainingContainer"]
 layout_mode = 2
 
@@ -251,6 +284,18 @@ disabled = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "停止"
+
+[node name="AgentEditorContainer" type="VBoxContainer" parent="VBoxContainer"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="AgentEditorPanel" type="HSplitContainer" parent="VBoxContainer/AgentEditorContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_horizontal = 3
 
 [node name="SettingsContainer" type="VBoxContainer" parent="VBoxContainer"]
 unique_name_in_owner = true

@@ -124,13 +124,17 @@ var config: TrainingConfig = TrainingConfig.new()
 var stats: TrainingStats = TrainingStats.new()
 var replay_buffer: ReplayBuffer = null
 
+# 训练可视化器
+var visualizer: GoGentTrainingVisualizer = null
+
 # DQN 网络参数
 var _q_network: Dictionary = {}  # 简化的 Q 网络权重
 var _target_network: Dictionary = {}
 var _training_thread: Thread = null
 
 func _init() -> void:
-	pass
+	# 初始化训练可视化器
+	visualizer = GoGentTrainingVisualizer.new()
 
 ## 开始训练
 func start_training(custom_config: Dictionary = {}) -> void:
@@ -268,6 +272,11 @@ func _start_training_loop() -> void:
 		if replay_buffer and replay_buffer.size() >= config.batch_size:
 			_train_network()
 		
+		# 记录训练数据到可视化器
+		if visualizer:
+			visualizer.record_reward(stats.episode, episode_reward, stats.avg_reward, stats.max_reward)
+			visualizer.record_epsilon(stats.episode, stats.epsilon)
+		
 		# 定期保存
 		if stats.episode % config.save_interval == 0:
 			save_model()
@@ -293,6 +302,10 @@ func _start_training_loop() -> void:
 		}
 		training_completed.emit(final_stats)
 		GoGentSingleton.print_gogent_console("训练完成！平均奖励: {0}".format([stats.avg_reward]), "success")
+		
+		# 输出训练统计摘要
+		if visualizer:
+			GoGentSingleton.print_gogent_console(visualizer.get_summary_text(), "info")
 
 func _run_episode() -> float:
 	# 模拟一个 episode 的运行

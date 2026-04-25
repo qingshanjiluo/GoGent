@@ -24,6 +24,7 @@ var console_manager = null
 var training_manager = null
 var api_manager = null
 var skill_manager = null
+var stream_manager = null
 
 # 查找标志
 var _has_tried_find_main_panel: bool = false
@@ -114,8 +115,15 @@ func load_all_configs() -> void:
 	# 初始化 API 管理器
 	api_manager = GoGentAPIManager.new()
 	
+	# 初始化流式管理器（由 api_manager 内部创建）
+	stream_manager = api_manager.stream_manager
+	
 	# 初始化技能管理器
 	skill_manager = GoGentSkillManager.new()
+	
+	# 确保训练可视化器可用
+	if training_manager and training_manager.visualizer == null:
+		training_manager.visualizer = GoGentTrainingVisualizer.new()
 	
 	GoGentPlugin.print_gogent("所有模块加载完成", "#42ffc2")
 

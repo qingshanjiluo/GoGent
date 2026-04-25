@@ -3,18 +3,21 @@ class_name GoGentMainPanel
 extends Control
 
 ## GoGent 主面板
-## 整合 Agent 聊天、控制台、训练监控、设置等功能
+## 整合 Agent 聊天、控制台、训练监控、Agent 编辑器、设置等功能
+## 支持流式响应实时显示
 
 signal send_message(message: Dictionary, message_content: String)
 
 @onready var chat_container: VBoxContainer = %ChatContainer
 @onready var console_container: VBoxContainer = %ConsoleContainer
 @onready var training_container: VBoxContainer = %TrainingContainer
+@onready var agent_editor_container: VBoxContainer = %AgentEditorContainer
 @onready var settings_container: VBoxContainer = %SettingsContainer
 
 @onready var tab_chat: Button = %TabChat
 @onready var tab_console: Button = %TabConsole
 @onready var tab_training: Button = %TabTraining
+@onready var tab_agent_editor: Button = %TabAgentEditor
 @onready var tab_settings: Button = %TabSettings
 
 @onready var message_list: VBoxContainer = %MessageList
@@ -26,6 +29,7 @@ signal send_message(message: Dictionary, message_content: String)
 @onready var agent_button: OptionButton = %AgentButton
 @onready var new_chat_button: Button = %NewChatButton
 @onready var collaborate_button: Button = %CollaborateButton
+@onready var stream_toggle: CheckButton = %StreamToggle
 
 @onready var console_output: RichTextLabel = %ConsoleOutput
 @onready var console_input: LineEdit = %ConsoleInput
@@ -40,6 +44,8 @@ signal send_message(message: Dictionary, message_content: String)
 @onready var training_start: Button = %TrainingStart
 @onready var training_pause: Button = %TrainingPause
 @onready var training_stop: Button = %TrainingStop
+@onready var chart_container: MarginContainer = %ChartContainer
+@onready var chart_placeholder: Label = %ChartPlaceholder
 
 @onready var settings_api_key: LineEdit = %SettingsApiKey
 @onready var settings_api_url: LineEdit = %SettingsApiUrl
@@ -56,13 +62,24 @@ var messages: Array[Dictionary] = []
 var first_chat: bool = true
 var is_generating: bool = false
 
+# 流式响应状态
+var _stream_message_item = null
+var _stream_request_id: int = -1
+var _stream_full_response: String = ""
+var _stream_full_thinking: String = ""
+
+# 训练可视化
+var _training_visualizer: GoGentTrainingVisualizer = null
+var _chart_control: Control = null
+
 func _ready() -> void:
-	container_list = [chat_container, console_container, training_container, settings_container]
+	container_list = [chat_container, console_container, training_container, agent_editor_container, settings_container]
 	
 	# 连接 Tab 按钮
 	tab_chat.pressed.connect(func(): _show_container(chat_container))
 	tab_console.pressed.connect(func(): _show_container(console_container))
 	tab_training.pressed.connect(func(): _show_container(training_container))
+	tab_agent_editor.pressed.connect(func(): _show_container(agent_editor_container))
 	tab_settings.pressed.connect(func(): _show_container(settings_container))
 	
 	# 连接聊天按钮
@@ -88,6 +105,15 @@ func _ready() -> void:
 	
 	# 初始化选择器
 	_init_selectors()
+	
+	# 连接流式信号
+	_connect_stream_signals()
+	
+	# 初始化训练可视化
+	_init_training_visualizer()
+	
+	# 初始化 Agent 编辑器
+	_init_agent_editor()
 
 func _init_selectors() -> void:
 	await get_tree().process_frame
@@ -106,6 +132,43 @@ func _init_selectors() -> void:
 		for agent in singleton.agent_manager.agents:
 			agent_button.add_item(agent.name)
 
+func _connect_stream_signals() -> void:
+	var singleton = GoGentSingleton.get_instance()
+	if singleton.api_manager and singleton.api_manager.stream_manager:
+		var sm = singleton.api_manager.stream_manager
+		if not sm.stream_chunk.is_connected(_on_stream_chunk_received):
+			sm.stream_chunk.connect(_on_stream_chunk_received)
+		if not sm.stream_thinking_chunk.is_connected(_on_stream_thinking_chunk_received):
+			sm.stream_thinking_chunk.connect(_on_stream_thinking_chunk_received)
+		if not sm.stream_completed.is_connected(_on_stream_completed_received):
+			sm.stream_completed.connect(_on_stream_completed_received)
+		if not sm.stream_error.is_connected(_on_stream_error_received):
+			sm.stream_error.connect(_on_stream_error_received)
+
+func _init_training_visualizer() -> void:
+	"""初始化训练可视化"""
+	_training_visualizer = GoGentTrainingVisualizer.new()
+	
+	# 连接训练管理器的信号到可视化
+	var singleton = GoGentSingleton.get_instance()
+	if singleton.training_manager:
+		if not singleton.training_manager.training_episode_completed.is_connected(_on_training_episode_for_chart):
+			singleton.training_manager.training_episode_completed.connect(_on_training_episode_for_chart)
+
+func _init_agent_editor() -> void:
+	"""初始化 Agent 编辑器面板"""
+	var editor_panel = preload("res://addons/gogent/ui/agent_editor/agent_editor_panel.tscn").instantiate()
+	editor_panel.name = "AgentEditorPanelInstance"
+	
+	# 替换占位的 HSplitContainer
+	var placeholder = %AgentEditorPanel
+	if placeholder and placeholder.get_parent():
+		var parent = placeholder.get_parent()
+		var idx = placeholder.get_index()
+		placeholder.queue_free()
+		parent.add_child(editor_panel)
+		parent.move_child(editor_panel, idx)
+
 func _show_container(container: VBoxContainer) -> void:
 	for c in container_list:
 		c.visible = c == container
@@ -114,6 +177,7 @@ func _show_container(container: VBoxContainer) -> void:
 	tab_chat.button_pressed = container == chat_container
 	tab_console.button_pressed = container == console_container
 	tab_training.button_pressed = container == training_container
+	tab_agent_editor.button_pressed = container == agent_editor_container
 	tab_settings.button_pressed = container == settings_container
 
 # ========== 聊天功能 ==========
@@ -142,8 +206,13 @@ func _on_send_message() -> void:
 	messages.append({"role": "user", "content": text})
 	_add_user_message(text)
 	
-	# 发送到 API
-	_send_to_api()
+	# 判断是否使用流式
+	var use_stream = stream_toggle != null and stream_toggle.button_pressed
+	
+	if use_stream:
+		_send_stream_to_api()
+	else:
+		_send_to_api()
 
 func _send_to_api() -> void:
 	var singleton = GoGentSingleton.get_instance()
@@ -160,6 +229,89 @@ func _send_to_api() -> void:
 		singleton.api_manager.request_completed.connect(_on_api_response)
 	
 	singleton.api_manager.send_chat_request(messages)
+
+func _send_stream_to_api() -> void:
+	var singleton = GoGentSingleton.get_instance()
+	if singleton.api_manager == null:
+		_add_assistant_message("[color='#ff7085']API 管理器未初始化[/color]")
+		return
+	
+	is_generating = true
+	send_button.disabled = true
+	send_button.text = "停止"
+	
+	# 创建流式消息项
+	_stream_message_item = preload("res://addons/gogent/ui/chat/message_item.tscn").instantiate()
+	message_list.add_child(_stream_message_item)
+	_stream_message_item.set_assistant_message("", "")
+	
+	# 重置流式状态
+	_stream_full_response = ""
+	_stream_full_thinking = ""
+	
+	# 发送流式请求
+	_stream_request_id = singleton.api_manager.send_stream_chat_request(messages)
+	
+	if _stream_request_id < 0:
+		is_generating = false
+		send_button.disabled = false
+		send_button.text = "发送"
+		_add_assistant_message("[color='#ff7085']流式请求发送失败[/color]")
+
+## 流式数据块接收
+func _on_stream_chunk_received(chunk: String, request_id: int) -> void:
+	if request_id != _stream_request_id:
+		return
+	
+	_stream_full_response += chunk
+	
+	# 实时更新消息项
+	if _stream_message_item and is_instance_valid(_stream_message_item):
+		_stream_message_item.set_assistant_message(_stream_full_response, _stream_full_thinking)
+		_scroll_to_bottom()
+
+func _on_stream_thinking_chunk_received(chunk: String, request_id: int) -> void:
+	if request_id != _stream_request_id:
+		return
+	
+	_stream_full_thinking += chunk
+	
+	if _stream_message_item and is_instance_valid(_stream_message_item):
+		_stream_message_item.set_assistant_message(_stream_full_response, _stream_full_thinking)
+
+func _on_stream_completed_received(success: bool, full_response: String, thinking: String, request_id: int) -> void:
+	if request_id != _stream_request_id:
+		return
+	
+	is_generating = false
+	send_button.disabled = false
+	send_button.text = "发送"
+	
+	if success:
+		messages.append({"role": "assistant", "content": full_response})
+		# 最终更新消息项
+		if _stream_message_item and is_instance_valid(_stream_message_item):
+			_stream_message_item.set_assistant_message(full_response, thinking)
+	else:
+		if _stream_message_item and is_instance_valid(_stream_message_item):
+			_stream_message_item.set_assistant_message(
+				"[color='#ff7085']流式请求失败[/color]"
+			)
+	
+	_stream_message_item = null
+	_stream_request_id = -1
+
+func _on_stream_error_received(error_msg: String, request_id: int) -> void:
+	if request_id != _stream_request_id:
+		return
+	
+	is_generating = false
+	send_button.disabled = false
+	send_button.text = "发送"
+	
+	_add_assistant_message("[color='#ff7085']流式错误: {0}[/color]".format([error_msg]))
+	_stream_message_item = null
+	_stream_request_id = -1
 
 func _on_api_response(success: bool, response: String, thinking: String) -> void:
 	is_generating = false
@@ -182,6 +334,10 @@ func _on_new_chat() -> void:
 	# 清空消息列表
 	for child in message_list.get_children():
 		child.queue_free()
+	
+	# 重置流式状态
+	_stream_message_item = null
+	_stream_request_id = -1
 
 func _on_collaborate() -> void:
 	var text = user_input.text.strip_edges()
@@ -318,6 +474,48 @@ func _reset_training_ui() -> void:
 	training_start.disabled = false
 	training_pause.disabled = true
 	training_stop.disabled = true
+
+## 训练轮次完成 - 更新图表
+func _on_training_episode_for_chart(episode: int, reward: float, epsilon: float) -> void:
+	if _training_visualizer == null:
+		return
+	
+	# 记录训练数据
+	var singleton = GoGentSingleton.get_instance()
+	if singleton.training_manager:
+		var stats = singleton.training_manager.stats
+		_training_visualizer.record_reward(episode, reward, stats.avg_reward, stats.max_reward)
+		_training_visualizer.record_epsilon(episode, epsilon)
+	
+	# 创建或更新图表
+	_update_chart()
+
+func _update_chart() -> void:
+	"""更新训练图表"""
+	if _training_visualizer == null:
+		return
+	
+	# 移除旧图表
+	if _chart_control and is_instance_valid(_chart_control):
+		_chart_control.queue_free()
+		_chart_control = null
+	
+	# 隐藏占位文本
+	if chart_placeholder:
+		chart_placeholder.visible = false
+	
+	# 创建新图表
+	_chart_control = _training_visualizer.create_chart_control()
+	_chart_control.name = "TrainingChart"
+	_chart_control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_chart_control.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_chart_control.custom_minimum_size = Vector2(200, 150)
+	
+	# 添加到图表容器
+	if chart_container:
+		var chart_panel = chart_container.get_child(0) if chart_container.get_child_count() > 0 else null
+		if chart_panel:
+			chart_panel.add_child(_chart_control)
 
 # ========== 设置功能 ==========
 
